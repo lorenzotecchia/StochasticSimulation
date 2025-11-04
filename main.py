@@ -19,12 +19,17 @@ def torus(
     Returns true if the given points (x, y, z) is inside the torus defined by the
     major radius R and the minor radius r.
     """
-    result = False
-    if (np.sqrt((x - origin[0]) ** 2 + (y - origin[1]) ** 2) - R) ** 2 + (
-        z - origin[2]
-    ) ** 2 - r**2 <= 0:
-        result = True
-
+    result = (
+        (np.sqrt((x - origin[0]) ** 2 + (y - origin[1]) ** 2) - R) ** 2
+        + (z - origin[2]) ** 2
+        - r**2
+        <= 0
+    ) or (
+        (np.sqrt((x - origin[0]) ** 2 + (y - origin[1]) ** 2) + R) ** 2
+        + (z - origin[2]) ** 2
+        - r**2
+        <= 0
+    )
     return result
 
 
@@ -33,19 +38,26 @@ def sphere(x: float, y: float, z: float, k: float) -> bool:
     Returns true if the given points (x, y, z) is inside the sphere defined by the
     radius k.
     """
-    result = False
-    if x**2 + y**2 + z**2 - k**2 <= 0:
-        result = True
+    result = x ^ 2 + y ^ 2 + z ^ 2 - k ^ 2 <= 0
+    return result
 
+
+def torus2D(x: float, y: float, r: float, R: float, origin: list = [0, 0]) -> bool:
+    """
+    Returns true if the given points (x, y, z) is inside the torus defined by the
+    major radius R and the minor radius r.
+    """
+    result = ((x - origin[0] - R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0) or (
+        (x - origin[0] + R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0
+    )
     return result
 
 
 def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
     dy = r + origin[1]
     dx = R + r + origin[0]
-    dz = r + origin[2]
 
-    return [[-dx, dx], [-dy, dy], [-dz, dz]]
+    return [[-dx, dx], [-dy, dy]]
 
 
 def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
@@ -53,15 +65,11 @@ def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> lis
     dx = R + r
     dz = r
 
-    return [
-        [-dx + origin[0], dx + origin[1]],
-        [-dy + origin[1], dy + origin[1]],
-        [-dz + origin[2], dz + origin[2]],
-    ]
+    return [[-dx + origin[0], dx + origin[1]], [-dy + origin[1], dy + origin[1]], [dz]]
 
 
 def box_volume(box: list) -> float:
-    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][1] - [2][0])
+    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][2] - [2][0])
 
 
 def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
@@ -70,7 +78,7 @@ def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     min_y = box[1][0]
     max_y = box[1][1]
     min_z = box[2][0]
-    max_z = box[2][1]
+    max_z = box[2][2]
 
     num_x = rand()
     num_y = rand()
@@ -81,7 +89,6 @@ def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     z = num_z * (max_z - min_z) + min_z
 
     total += sphere(x, y, z, k) and torus(x, y, z, r, R)
-    return total
 
 
 def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
@@ -89,10 +96,10 @@ def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
     Returns fraction of surface area of intersection between sphere and torus
     """
     total = 0
-    box = box_standard(r, R)
+    box = box_standard(k, r, R)
     mc_samples = []
     mc_in_mask = []
-    for _ in range(n):
+    for i in range(n):
         total = one_sample(k, r, R, box, total)
 
     return total * box_volume(box) / n
@@ -235,7 +242,8 @@ def plot_2d(
     torus_r = plt.Circle((origin_t[0] - R, origin_t[1]), r, color="green", fill=False)
 
     # fill intersection
-    _fill_between2D(ax, r, R, k, origin_s, origin_t)
+    # _fill_between2D(ax, r, R, k, origin_s, origin_t)
+
     # print box if available
     if box is not None:
         # box
@@ -278,7 +286,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="out samples",
             )
 
             # plot in samples
@@ -289,7 +296,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="in samples",
             )
         else:
             # plot out samples
@@ -301,7 +307,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="samples",
             )
 
     # plot
@@ -364,6 +369,6 @@ if __name__ == "__main__":
         R,
         samples=mc_samples,
         mc_in_mask=mc_in_mask,
-        box=box_sample(r, R),
+        box=box_sample(k, r, R, origin=[0, 0]),
         save_path="img/2d.png",
     )
