@@ -43,8 +43,9 @@ def sphere(x: float, y: float, z: float, k: float) -> bool:
 def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
     dy = r + origin[1]
     dx = R + r + origin[0]
+    dz = r + origin[2]
 
-    return [[-dx, dx], [-dy, dy]]
+    return [[-dx, dx], [-dy, dy], [-dz, dz]]
 
 
 def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
@@ -52,11 +53,15 @@ def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> lis
     dx = R + r
     dz = r
 
-    return [[-dx + origin[0], dx + origin[1]], [-dy + origin[1], dy + origin[1]], [dz]]
+    return [
+        [-dx + origin[0], dx + origin[1]],
+        [-dy + origin[1], dy + origin[1]],
+        [-dz + origin[2], dz + origin[2]],
+    ]
 
 
 def box_volume(box: list) -> float:
-    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][2] - [2][0])
+    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][1] - [2][0])
 
 
 def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
@@ -65,7 +70,7 @@ def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     min_y = box[1][0]
     max_y = box[1][1]
     min_z = box[2][0]
-    max_z = box[2][2]
+    max_z = box[2][1]
 
     num_x = rand()
     num_y = rand()
@@ -76,6 +81,7 @@ def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     z = num_z * (max_z - min_z) + min_z
 
     total += sphere(x, y, z, k) and torus(x, y, z, r, R)
+    return total
 
 
 def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
@@ -83,10 +89,10 @@ def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
     Returns fraction of surface area of intersection between sphere and torus
     """
     total = 0
-    box = box_standard(k, r, R)
+    box = box_standard(r, R)
     mc_samples = []
     mc_in_mask = []
-    for i in range(n):
+    for _ in range(n):
         total = one_sample(k, r, R, box, total)
 
     return total * box_volume(box) / n
@@ -230,7 +236,6 @@ def plot_2d(
 
     # fill intersection
     _fill_between2D(ax, r, R, k, origin_s, origin_t)
-
     # print box if available
     if box is not None:
         # box
@@ -359,6 +364,6 @@ if __name__ == "__main__":
         R,
         samples=mc_samples,
         mc_in_mask=mc_in_mask,
-        box=box_sample(k, r, R, origin=[0, 0]),
+        box=box_sample(r, R),
         save_path="img/2d.png",
     )
