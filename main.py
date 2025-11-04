@@ -15,9 +15,17 @@ def torus(
     Returns true if the given points (x, y, z) is inside the torus defined by the
     major radius R and the minor radius r.
     """
-    result = (np.sqrt((x - origin[0]) ^ 2 + (y - origin[1]) ^ 2) - R) ^ 2 + (
-        z - origin[2]
-    ) ^ 2 - r ^ 2 <= 0
+    result = (
+        (np.sqrt((x - origin[0]) ** 2 + (y - origin[1]) ** 2) - R) ** 2
+        + (z - origin[2]) ** 2
+        - r**2
+        <= 0
+    ) or (
+        (np.sqrt((x - origin[0]) ** 2 + (y - origin[1]) ** 2) + R) ** 2
+        + (z - origin[2]) ** 2
+        - r**2
+        <= 0
+    )
     return result
 
 
@@ -35,7 +43,9 @@ def torus2D(x: float, y: float, r: float, R: float, origin: list = [0, 0]) -> bo
     Returns true if the given points (x, y, z) is inside the torus defined by the
     major radius R and the minor radius r.
     """
-    result = (x - origin[0] - R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0
+    result = ((x - origin[0] - R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0) or (
+        (x - origin[0] + R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0
+    )
     return result
 
 
@@ -137,11 +147,6 @@ def surface_to_volume(R: float, surface_area: float) -> float:
     return volume
 
 
-# neeeded?
-def PRNG():
-    pass
-
-
 def deterministic_sequence(seed: float) -> float:
     """
     Generates a deterministic sequence of numbers based on the seed.
@@ -239,7 +244,7 @@ def plot_2d(
     torus_r = plt.Circle((origin_t[0] - R, origin_t[1]), r, color="green", fill=False)
 
     # fill intersection
-    _fill_between2D(ax, r, R, k, origin_s, origin_t)
+    # _fill_between2D(ax, r, R, k, origin_s, origin_t)
 
     # print box if available
     if box is not None:
@@ -283,7 +288,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="out samples",
             )
 
             # plot in samples
@@ -294,7 +298,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="in samples",
             )
         else:
             # plot out samples
@@ -306,7 +309,6 @@ def plot_2d(
                 marker=".",
                 s=0.2,
                 alpha=0.3,
-                label="samples",
             )
 
     # plot
