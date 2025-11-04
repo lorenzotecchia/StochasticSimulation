@@ -72,6 +72,29 @@ def box_volume(box: list) -> float:
     return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][2] - [2][0])
 
 
+def find_centroid_2d(mc_samples: list, mc_in_mask: list) -> list:
+    """
+    Takes all Monte Carlo sample points and the in-mask of those points to find the centroid of the surface area slice
+    """
+
+    # mc_in_mask contains both sides of the intersection
+    # use only points with positive x
+
+    in_samples = np.array(
+        [
+            mc_samples[i]
+            for i in range(len(mc_samples))
+            if mc_in_mask[i][0] and mc_in_mask[i][1] and mc_samples[i][0] >= 0
+        ]
+    )
+
+    # the centroid is the mean of all points
+    centroid_x = np.mean(in_samples[:, 0])
+    centroid_y = np.mean(in_samples[:, 1])
+
+    return [centroid_x, centroid_y]
+
+
 def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     min_x = box[0][0]
     max_x = box[0][1]
@@ -147,9 +170,12 @@ def surface_to_volume(R: float, surface_area: float) -> float:
 
 def deterministic_sequence(seed: float) -> float:
     """
-    Generates a deterministic sequence of numbers based on the seed.
+    Generates a deterministic sequence of numbers based on the seed. Must be between 0 and 1.
     """
-    return 0
+    for i in range(1, 100):
+        seed = (seed * 4.21 * (1 - seed)) % 1
+
+    return seed
 
 
 def _fill_between2D(
@@ -353,6 +379,7 @@ if __name__ == "__main__":
     r = 0.4
 
     area, mc_samples, mc_in_mask = monte_carlo_2d(k, r, R, n=10000)
+    centroid = find_centroid_2d(mc_samples, mc_in_mask)
     volume = surface_to_volume(R, area)
     volume_toro = 2 * np.pi * R * np.pi * r**2
 
