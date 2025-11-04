@@ -1,15 +1,19 @@
-import numpy as np
-import random
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-
+import matplotlib.pyplot as plt
+import numpy as np
+from numpy.random import rand
 
 BBOX_STANDARD = []
 BBOX_SAMPLE = []
 
 
 def torus(
-    x: float, y: float, z: float, r: float, R: float, origin: list = [0, 0, 0]
+    x: float,
+    y: float,
+    z: float,
+    r: float,
+    R: float,
+    origin: list[float] = [0.0, 0.0, 0.0],
 ) -> bool:
     """
     Returns true if the given points (x, y, z) is inside the torus defined by the
@@ -49,31 +53,23 @@ def torus2D(x: float, y: float, r: float, R: float, origin: list = [0, 0]) -> bo
     return result
 
 
-def sphere2D(x: float, y: float, k: float) -> bool:
-    """
-    Returns true if the given points (x, y, z) is inside the sphere defined by the
-    radius k.
-    """
-    result = x**2 + y**2 - k**2 <= 0
-    return result
-
-
-def box_standard(k: float, r: float, R: float, origin: list = [0, 0]) -> list:
+def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
     dy = r + origin[1]
     dx = R + r + origin[0]
 
     return [[-dx, dx], [-dy, dy]]
 
 
-def box_sample(k: float, r: float, R: float, origin: list = [0, 0]) -> list:
+def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
     dy = r
     dx = R + r
+    dz = r
 
-    return [[-dx + origin[0], dx + origin[0]], [-dy + origin[1], dy + origin[1]]]
+    return [[-dx + origin[0], dx + origin[1]], [-dy + origin[1], dy + origin[1]], [dz]]
 
 
-def box_area(box: list) -> float:
-    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0])
+def box_volume(box: list) -> float:
+    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][2] - [2][0])
 
 
 def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
@@ -81,19 +77,18 @@ def one_sample(k: float, r: float, R: float, box: list, total: int) -> int:
     max_x = box[0][1]
     min_y = box[1][0]
     max_y = box[1][1]
+    min_z = box[2][0]
+    max_z = box[2][2]
 
-    num_x = random.random()
-    num_y = random.random()
+    num_x = rand()
+    num_y = rand()
+    num_z = rand()
 
     x = num_x * (max_x - min_x) + min_x
     y = num_y * (max_y - min_y) + min_y
+    z = num_z * (max_z - min_z) + min_z
 
-    x_in = sphere2D(x, y, k)
-    y_in = torus2D(x, y, r, R)
-
-    total = total + (x_in and y_in)
-
-    return total, [x, y], [x_in, y_in]
+    total += sphere(x, y, z, k) and torus(x, y, z, r, R)
 
 
 def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
@@ -105,35 +100,38 @@ def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
     mc_samples = []
     mc_in_mask = []
     for i in range(n):
-        total, (x, y), (x_in, y_in) = one_sample(k, r, R, box, total)
-        mc_samples.append([x, y])
-        mc_in_mask.append([x_in, y_in])
+        total = one_sample(k, r, R, box, total)
 
-    return total * box_area(box) / n, mc_samples, mc_in_mask
+    return total * box_volume(box) / n
 
 
 def mixed_sampling(
-    k: float, r: float, R: float, p: float, n: int = 100_000, origin=[0, 0]
+    k: float,
+    r: float,
+    R: float,
+    p: float,
+    n: int = 100_000,
+    origin: list[float] = [0.0, 0.0, 0.0],
 ) -> float:
     """ """
     # first box
     total1 = 0
-    box1 = box_standard(k, r, R)
+    box1 = box_standard(r, R)
 
     # second box
     total2 = 0
-    box2 = box_sample(k, r, R, origin=origin)
+    box2 = box_sample(r, R, origin=origin)
 
-    for i in range(n):
-        rnd = random.random()
+    for _ in range(n):
+        rnd = rand()
         if rnd <= p:
-            total1, _, _ = one_sample(k, r, R, box1, total1)
+            total1 = one_sample(k, r, R, box1, total1)
 
         else:
-            total2, _, _ = one_sample(k, r, R, box2, total2)
+            total2 = one_sample(k, r, R, box2, total2)
 
-    surface_area1 = box_area(box1)
-    surface_area2 = box_area(box2)
+    surface_area1 = box_volume(box1)
+    surface_area2 = box_volume(box2)
 
     return p * surface_area1 + (1 - p) * surface_area2
 
@@ -142,7 +140,7 @@ def surface_to_volume(R: float, surface_area: float) -> float:
     """
     Converts surface area to volume
     """
-    volume = surface_area * 2 * np.pi * surface_area
+    volume = surface_area * 2 * np.pi * R * surface_area
 
     return volume
 
@@ -151,7 +149,7 @@ def deterministic_sequence(seed: float) -> float:
     """
     Generates a deterministic sequence of numbers based on the seed.
     """
-    pass
+    return 0
 
 
 def _fill_between2D(
