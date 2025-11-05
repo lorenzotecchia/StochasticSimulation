@@ -12,12 +12,28 @@ def box_volume(box: list) -> float:
     return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][1] - box[2][0])
 
 
+def box_2d_area(box: list) -> float:
+    return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0])
+
+
 def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
     dy = R + r + origin[1]
     dx = R + r + origin[0]
     dz = r + origin[2]
 
     return [[-dx, dx], [-dy, dy], [-dz, dz]]
+
+
+def box_onesided_2d(r: float, R: float, origin: list[float] = [0.0, 0.0]) -> list:
+    """
+    Box exactly around one side of the torus in 2D (x-z plane, positive x only)
+    """
+    dy = r + origin[1]
+    dy_minus = -r + origin[1]
+    dx = R + r + origin[0]
+    dx_minus = R - r + origin[0]
+
+    return [[dx_minus, dx], [dy_minus, dy]]
 
 
 def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
@@ -85,6 +101,53 @@ def samples(
     return samples
 
 
+def samples_2d(
+    box: list[list[float]],
+    n: int = 100_000,
+):
+    min_x, min_z = box[0][0], box[1][0]
+    max_x, max_z = box[0][1], box[1][1]
+
+    samples = np.random.uniform([min_x, min_z], [max_x, max_z], size=(n, 2))
+    return samples
+
+
+def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
+    """
+    Estimates area of intersection between circle (radius k) and torus (R, r).
+    """
+    # box in x and z only (new x-y sytem defined here)
+    box = box_onesided_2d(r, R)
+
+    # pts in 2d
+    pts = samples_2d(box, n)
+
+    # add zero z cooridinate for sphere and torus function compatibility
+    pts_3d = np.hstack((pts[:, 0:1], np.zeros((pts.shape[0], 1)), pts[:, 1:2]))
+
+    inside_sphere = sphere(pts_3d, k)
+    inside_torus = torus(pts_3d, r, R)
+
+    # add points inside
+    count = np.sum(inside_sphere & inside_torus)
+
+    # in points boolean mask
+    pts_in = inside_sphere & inside_torus
+
+    # return area
+    area = box_2d_area(box) * count / n
+
+    # find centroid of area
+    centroid_pos, centroid_neg = find_centroid(pts[pts_in])
+    # find x for centroid
+    x_centroid = centroid_pos[0]
+
+    # rotate area around centroid to get volume
+    volume = area * 2 * np.pi * x_centroid
+
+    return volume, (pts, pts_in)
+
+
 def monte_carlo_3d(
     k: float, r: float, R: float, n: int = 100_000
 ) -> list[float, np.ndarray]:
@@ -146,10 +209,10 @@ def surface_to_volume(R: float, surface_area: float) -> float:
     return volume
 
 
-# TODO: to change with ndarray
 def find_centroid(in_pts: np.ndarray) -> np.ndarray:
     """
     Takes all Monte Carlo sample points and the in-mask of those points to find the centroid of the surface area slice
+    One for positive x and one for negative x - 2D only
     """
     # split in positive x and y
     centroid_x_plus = np.mean(in_pts[in_pts[:, 0] >= 0][:, 0])
@@ -190,6 +253,7 @@ def plot_2d(
     centroid: np.ndarray = None,
     save_path: str = "",
     show: bool = False,
+    title: str = "",
 ) -> plt.Axes:
     """
     Plots the intersection between the sphere and the torus.
@@ -231,19 +295,38 @@ def plot_2d(
     torus_r = plt.Circle((origin_t[0] - R, origin_t[1]), r, color="green", fill=False)
 
     # box (only x and z)
-    box = box_standard(r, R)
+    # from 3d:
+    if pts.shape[1] == 3:
 
-    rect = mpatches.Rectangle(
-        (box[0][0], box[2][0]),
-        box[0][1] - box[0][0],
-        box[2][1] - box[2][0],
-        fill=False,
-        ls="-.",
-        color="darkred",
-        lw=2,
-        label="standard box",
-    )
-    ax.add_patch(rect)
+        box = box_standard(r, R)
+
+        rect = mpatches.Rectangle(
+            (box[0][0], box[2][0]),
+            box[0][1] - box[0][0],
+            box[2][1] - box[2][0],
+            fill=False,
+            ls="-.",
+            color="darkred",
+            lw=2,
+            label="standard box",
+        )
+        ax.add_patch(rect)
+
+    # if from 2d, use narrow box around torus
+    if pts.shape[1] == 2:
+        box = box_onesided_2d(r, R)
+
+        rect = mpatches.Rectangle(
+            (box[0][0], box[1][0]),
+            box[0][1] - box[0][0],
+            box[1][1] - box[1][0],
+            fill=False,
+            ls="-.",
+            color="darkred",
+            lw=2,
+            label="standard box",
+        )
+        ax.add_patch(rect)
 
     # points from monte carlo sim
     s = 0.1
@@ -304,7 +387,7 @@ def plot_2d(
         plt.scatter(
             centroid[0][0],
             centroid[0][1],
-            color="darkblue",
+            color="black",
             marker="o",
             s=25,
             label="centroid",
@@ -326,8 +409,8 @@ def plot_2d(
     # limits
     ax.set_xlim([-x_max, x_max])
     ax.set_ylim([-x_max, x_max])
-    if np.sum(origin_t) != 0:
-        ax.set_title("2D cross-section of Sphere and Torus (off-center)")
+    if title:
+        ax.set_title(title)
     else:
         ax.set_title("2D cross-section of Sphere and Torus")
 
@@ -457,14 +540,27 @@ if __name__ == "__main__":
 
     estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n)
     print(pts.shape, pts_in.shape)
-    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.4f}")
+    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.9f}")
     # --- 3D plot --- (quite slow)
     # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
     # --- 2D plot ---
-    delta = 0.35 * r
-    slice_y = np.abs(pts[:, 1]) < delta
-    pts_in_2d = pts_in & slice_y
-    centroid_2d = find_centroid(pts[pts_in_2d])
+    # delta = 0.35 * r
+    # slice_y = np.abs(pts[:, 1]) < delta
+    # pts_in_2d = pts_in & slice_y
+    # centroid_2d = find_centroid(pts[pts_in_2d])
+    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
+
+    # --- Monte Carlo volume estimation via 2D simplification ---
+    estimated_volume_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r, R, n)
     plot_2d(
-        k, r, R, pts=pts, pts_in=pts_in, centroid=centroid_2d, save_path="img/2d.png"
+        k,
+        r,
+        R,
+        pts=pts_2d,
+        pts_in=pts_in_2d,
+        centroid=find_centroid(pts_2d[pts_in_2d]),
+        save_path="img/2d_estimate_via_2d.png",
+        title="2D cross-section based on 2D estimation method",
     )
+
+    print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
