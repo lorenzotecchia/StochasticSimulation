@@ -86,17 +86,17 @@ def samples(
 
 
 def monte_carlo_3d(
-    k: float, r: float, R: float, n: int = 100_000
+    k: float, r: float, R: float, n: int = 100_000, origin: list = [0.0, 0.0, 0.0]
 ) -> list[float, np.ndarray]:
     """
     Estimates volume of intersection between sphere (radius k) and torus (R, r).
     """
-    box = box_standard(r, R)  # or box_sample(r, R)
+    box = box_standard(r, R, origin=origin)  # or box_sample(r, R)
 
     pts = samples(box, n)  # or deterministic_sequence(box, n)
 
     inside_sphere = sphere(pts, k)
-    inside_torus = torus(pts, r, R)
+    inside_torus = torus(pts, r, R, origin=origin)
 
     count = np.sum(inside_sphere & inside_torus)
 
@@ -113,28 +113,39 @@ def mixed_sampling(
     p: float,
     n: int = 100_000,
     origin: list[float] = [0.0, 0.0, 0.0],
-) -> float:
+) -> list[float, np.ndarray, np.ndarray]:
     """ """
-    # first box
-    total1 = 0
-    box1 = box_standard(r, R)
-
-    # second box
-    total2 = 0
-    box2 = box_sample(r, R, origin=[0.0, 0.0, 0.1])
+    box1 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
+    box2 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
+    pts1 = []
+    pts2 = []
 
     for _ in range(n):
         rnd = rand()
         if rnd <= p:
-            total1 = one_sample(k, r, R, box1, total1)
+            pts1.append(samples(box1, 1)[0])
 
         else:
-            total2 = one_sample(k, r, R, box2, total2)
+            pts2.append(samples(box2, 1)[0])
+    # first box:
+    pts1 = np.array(pts1)
+    pts2 = np.array(pts2)
+    inside_sphere = sphere(pts1, k)
+    inside_torus = torus(pts1, r, R)
+    count1 = np.sum(inside_sphere & inside_torus)
+    pts1_in = inside_sphere & inside_torus
 
-    surface_area1 = box_volume(box1)
-    surface_area2 = box_volume(box2)
+    # second box
+    inside_sphere = sphere(pts1, k)
+    inside_torus = torus(pts1, r, R)
+    count2 = np.sum(inside_sphere & inside_torus)
+    pts2_in = inside_sphere & inside_torus
 
-    return p * surface_area1 + (1 - p) * surface_area2
+    result = p * (count1 / len(pts1) * box_volume(box1)) + (1 - p) * (
+        count2 / len(pts2) * box_volume(box2)
+    )
+
+    return result, (pts1, pts1_in), (pts2, pts2_in)
 
 
 def surface_to_volume(R: float, surface_area: float) -> float:
@@ -447,15 +458,22 @@ if __name__ == "__main__":
     r = 0.4  # torus minor radius
     R = 0.75  # torus major radius
     n = 100_000  # Monte Carlo samples
+    origin_shift = [0.0, 0.0, 0.1]
 
     # sequence = deterministic_sequence(seed_deterministic, n)
     # print(sequence)
     # --- Monte Carlo volume estimation ---
 
-    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n)
+    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n, origin=origin_shift)
     print(pts.shape, pts_in.shape)
     print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.4f}")
     # --- 3D plot --- (quite slow)
     # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
     # --- 2D plot ---
     plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
+
+    estimated_volume_mix, (pts1, pts1_in), (pts2, pts2_in) = mixed_sampling(
+        k, r, R, 0.5, n, origin=origin_shift
+    )
+    print(pts1.shape, pts1_in.shape, pts2.shape, pts2_in.shape)
+    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume_mix:.4f}")
