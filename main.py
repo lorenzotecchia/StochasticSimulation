@@ -177,7 +177,9 @@ def mixed_sampling(
     n: int = 100_000,
     origin: list[float] = [0.0, 0.0, 0.0],
 ) -> list[float, np.ndarray, np.ndarray]:
-    """ """
+    """
+    Estimates volume of intersection between sphere (radius k) and torus (R, r).
+    """
     box1 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
     box2 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
     pts1 = []
@@ -581,13 +583,12 @@ if __name__ == "__main__":
     # centroid_2d = find_centroid(pts[pts_in_2d])
     plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
 
-<<<<<<< HEAD
     estimated_volume_mix, (pts1, pts1_in), (pts2, pts2_in) = mixed_sampling(
         k, r, R, 0.5, n, origin=origin_shift
     )
     print(pts1.shape, pts1_in.shape, pts2.shape, pts2_in.shape)
     print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume_mix:.4f}")
-=======
+
     # --- Monte Carlo volume estimation via 2D simplification ---
     estimated_volume_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r, R, n)
     plot_2d(
@@ -601,4 +602,3 @@ if __name__ == "__main__":
         title="2D cross-section based on 2D estimation method",
     )
     print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
->>>>>>> refs/remotes/origin/main
