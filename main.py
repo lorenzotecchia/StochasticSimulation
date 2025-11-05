@@ -526,6 +526,25 @@ def plot_3d(
     return ax
 
 
+def run_multi_executions(
+    sim: callable,
+    runs: int,
+    k: float,
+    r: float,
+    R: float,
+) -> list[float]:
+    """
+    Runs multiple executions of the given simulation function and returns the results.
+    sim: simulation function to run
+    runs: number of runs to execute
+    """
+    results = []
+    for _ in range(runs):
+        result, _ = sim(k, r, R, n)
+        results.append(result)
+    return results
+
+
 if __name__ == "__main__":
     # Parameters
     seed_deterministic = np.random.rand(3)
@@ -562,5 +581,4 @@ if __name__ == "__main__":
         save_path="img/2d_estimate_via_2d.png",
         title="2D cross-section based on 2D estimation method",
     )
-
     print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
