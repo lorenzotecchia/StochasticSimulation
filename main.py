@@ -2,6 +2,7 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.random import rand
+from itertools import product, combinations
 
 BBOX_STANDARD = []
 BBOX_SAMPLE = []
@@ -84,7 +85,9 @@ def samples(
     return samples
 
 
-def monte_carlo_3d(k: float, r: float, R: float, n: int = 100_000) -> float:
+def monte_carlo_3d(
+    k: float, r: float, R: float, n: int = 100_000
+) -> list[float, np.ndarray]:
     """
     Estimates volume of intersection between sphere (radius k) and torus (R, r).
     """
@@ -97,7 +100,10 @@ def monte_carlo_3d(k: float, r: float, R: float, n: int = 100_000) -> float:
 
     count = np.sum(inside_sphere & inside_torus)
 
-    return count / n * box_volume(box)
+    # in points boolean mask
+    pts_in = inside_sphere & inside_torus
+
+    return count / n * box_volume(box), (pts, pts_in)
 
 
 def mixed_sampling(
@@ -184,53 +190,14 @@ def deterministic_sequence(points: np.ndarray, n: int = 100_000) -> np.ndarray:
     return samples
 
 
-def _fill_between2D(
-    ax, r: float, R: float, k: float, origin_s: list, origin_t: list, alpha=0.3
-):
-    """
-    Fills intersection area betweeen sphere and torus
-    """
-
-    # circles (2D cuts)
-    torus_R = mpatches.Circle(
-        (origin_t[0] + R, origin_t[1]), r, fill=False, ec=None, lw=2
-    )
-    torus_L = mpatches.Circle(
-        (origin_t[0] - R, origin_t[1]), r, fill=False, ec=None, lw=2
-    )
-    sphere = mpatches.Circle((origin_s[0], origin_s[1]), k, fill=False, ec=None, lw=2)
-
-    ax.add_patch(torus_R)
-    ax.add_patch(torus_L)
-    ax.add_patch(sphere)
-
-    # --- overlap fills ---
-    alpha = 0.35
-
-    # right overlap: (sphere ∩ torus_R)
-    over_R = mpatches.Circle(
-        (origin_s[0], origin_s[1]), k, fc="gray", ec="none", alpha=alpha
-    )
-    over_R.set_clip_path(torus_R)  # clip the sphere by the torus circle
-    ax.add_patch(over_R)
-
-    # left overlap: (sphere ∩ torus_L)
-    over_L = mpatches.Circle(
-        (origin_s[0], origin_s[1]), k, fc="gray", ec="none", alpha=alpha
-    )
-    over_L.set_clip_path(torus_L)
-    ax.add_patch(over_L)
-
-
 def plot_2d(
     k: float,
     r: float,
     R: float,
     origin_s: list = [0, 0],
     origin_t: list = [0, 0],
-    samples: list = None,
-    mc_in_mask: list = None,
-    box: list = None,
+    pts: np.ndarray = None,
+    pts_in: np.ndarray = None,
     save_path: str = "",
     show: bool = False,
 ) -> plt.Axes:
@@ -273,72 +240,73 @@ def plot_2d(
     )
     torus_r = plt.Circle((origin_t[0] - R, origin_t[1]), r, color="green", fill=False)
 
-    # fill intersection
-    # _fill_between2D(ax, r, R, k, origin_s, origin_t)
+    # box
+    box = box_standard(r, R)
+    rect = mpatches.Rectangle(
+        (box[0][0], box[1][0]),
+        box[0][1] - box[0][0],
+        box[1][1] - box[1][0],
+        fill=False,
+        ls="-.",
+        color="darkred",
+        lw=2,
+        label="standard box",
+    )
+    ax.add_patch(rect)
 
-    # print box if available
-    if box is not None:
-        # box
-        rect = mpatches.Rectangle(
-            (box[0][0], box[1][0]),
-            box[0][1] - box[0][0],
-            box[1][1] - box[1][0],
-            fill=False,
-            ls="-.",
-            color="darkred",
-            lw=2,
-            label="sampling box",
-        )
-        ax.add_patch(rect)
+    # points from monte carlo sim
+    s = 0.05
+    if pts is not None:
+        if pts_in is not None:
+            # in and out samples
 
-    # mc samples
-    if samples is not None:
-        if mc_in_mask is not None:
-            # mask in samples
-            in_samples = np.array(
-                [
-                    samples[i]
-                    for i in range(len(samples))
-                    if mc_in_mask[i][0] and mc_in_mask[i][1]
-                ]
-            )
-            out_samples = np.array(
-                [
-                    samples[i]
-                    for i in range(len(samples))
-                    if not (mc_in_mask[i][0] and mc_in_mask[i][1])
-                ]
-            )
+            # if from 3d points
+            if pts.shape[1] == 3:
+                # slice y = 0 plane
+                delta = 0.35 * r
+                slice_y = np.abs(pts[:, 1]) < delta
+                pts_in_2d = pts_in & slice_y
+                pts_out_2d = ~pts_in & slice_y
+                # mask
+                in_pts = pts[pts_in_2d][:, [0, -1]]
+                # binary invert for out points
+                out_pts = pts[pts_out_2d][:, [0, -1]]
+            # points in 2d
+            else:
+                in_pts = pts[pts_in]
+                # binary invert for out points
+                out_pts = pts[~pts_in]
 
-            # plot out samples
-            plt.scatter(
-                out_samples[:, 0],
-                out_samples[:, 1],
+            ax.scatter(
+                out_pts[:, 0],
+                out_pts[:, 1],
                 color="darkred",
                 marker=".",
-                s=0.2,
+                s=s,
                 alpha=0.3,
+                label="out samples",
             )
 
-            # plot in samples
-            plt.scatter(
-                in_samples[:, 0],
-                in_samples[:, 1],
+            ax.scatter(
+                in_pts[:, 0],
+                in_pts[:, 1],
                 color="darkblue",
                 marker=".",
-                s=0.2,
+                s=s,
                 alpha=0.3,
+                label="in samples",
             )
         else:
-            # plot out samples
-            samples = np.array(samples)
-            plt.scatter(
-                samples[:, 0],
-                samples[:, 1],
+            # only out samples
+            pts = np.array(pts)
+            ax.scatter(
+                pts[:, 0],
+                pts[:, 1],
                 color="darkred",
                 marker=".",
-                s=0.2,
+                s=s,
                 alpha=0.3,
+                label="out samples",
             )
 
     # plot
@@ -376,16 +344,118 @@ def plot_2d(
     return ax
 
 
+def plot_3d(
+    k: float, r: float, R: float, pts: np.ndarray = None, pts_in: np.ndarray = None
+) -> plt.Axes:
+    """
+    Plots the intersection between the sphere and the torus in 3D.
+    k: radius of the sphere
+    r: minor radius of the torus
+    R: major radius of the torus
+    """
+
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Sphere
+    phi, theta = np.mgrid[0.0 : np.pi : 100j, 0.0 : 2.0 * np.pi : 100j]
+    xs = k * np.sin(phi) * np.cos(theta)
+    ys = k * np.sin(phi) * np.sin(theta)
+    zs = k * np.cos(phi)
+    ax.plot_surface(xs, ys, zs, edgecolor="darkblue", linewidth=0.1, alpha=0.1)
+
+    # Torus
+    u = np.linspace(0, 2 * np.pi, 100)
+    v = np.linspace(0, 2 * np.pi, 100)
+    U, V = np.meshgrid(u, v)
+    X = (R + r * np.cos(V)) * np.cos(U)
+    Y = (R + r * np.cos(V)) * np.sin(U)
+    Z = r * np.sin(V)
+    ax.plot_surface(X, Y, Z, edgecolor="darkgreen", linewidth=0.1, alpha=0.1)
+
+    # box
+    box = box_standard(r, R)
+    x_min, x_max = box[0]
+    y_min, y_max = box[1]
+    z_min, z_max = box[2]
+    # vertices of the box
+    box_vertices = np.array(
+        list(product([x_min, x_max], [y_min, y_max], [z_min, z_max]))
+    )
+    # draw box edges
+    for s, e in combinations(box_vertices, 2):
+        # two vertices share an edge if they differ by exactly one coordinate
+        if np.sum(np.abs(s - e) == 0) == 2:
+            ax.plot3D(*zip(s, e), color="darkred", linestyle="-", linewidth=0.9)
+
+    # draw monte carlo points if available
+    s = 0.05
+    if pts is not None:
+        if pts_in is not None:
+            # plot out samples
+            in_pts = pts[pts_in]
+            # out points (bitwise invert)
+            out_pts = pts[~pts_in]
+
+            ax.scatter(
+                out_pts[:, 0],
+                out_pts[:, 1],
+                out_pts[:, 2],
+                color="darkred",
+                marker=".",
+                s=s,
+                alpha=0.3,
+            )
+
+            # plot in samples
+            ax.scatter(
+                in_pts[:, 0],
+                in_pts[:, 1],
+                in_pts[:, 2],
+                color="darkblue",
+                marker=".",
+                s=s,
+                alpha=0.3,
+            )
+        else:
+            # plot out samples
+            pts = np.array(pts)
+            ax.scatter(
+                pts[:, 0],
+                pts[:, 1],
+                pts[:, 2],
+                color="darkred",
+                marker=".",
+                s=s,
+                alpha=0.3,
+            )
+
+    ax.set_title("3D view of Sphere and Torus")
+    ax.set_xlabel("X axis")
+    ax.set_ylabel("Y axis")
+    ax.set_zlabel("Z axis")
+    plt.tight_layout()
+    plt.show()
+
+    return ax
+
+
 if __name__ == "__main__":
     # Parameters
     seed_deterministic = np.random.rand(3)
     k = 1.0  # sphere radius
-    r = 0.5  # torus minor radius
-    R = 0.5  # torus major radius
+    r = 0.4  # torus minor radius
+    R = 0.75  # torus major radius
     n = 100_000  # Monte Carlo samples
 
-    sequence = deterministic_sequence(seed_deterministic, n)
-    print(sequence)
+    # sequence = deterministic_sequence(seed_deterministic, n)
+    # print(sequence)
     # --- Monte Carlo volume estimation ---
-    estimated_volume = monte_carlo_3d(k, r, R, n)
+
+    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n)
+    print(pts.shape, pts_in.shape)
     print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.4f}")
+    # --- 3D plot --- (quite slow)
+    # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
+    # --- 2D plot ---
+    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
