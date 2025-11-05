@@ -13,7 +13,7 @@ def box_volume(box: list) -> float:
 
 
 def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
-    dy = r + origin[1]
+    dy = R + r + origin[1]
     dx = R + r + origin[0]
     dz = r + origin[2]
 
@@ -147,27 +147,16 @@ def surface_to_volume(R: float, surface_area: float) -> float:
 
 
 # TODO: to change with ndarray
-def find_centroid_2d(mc_samples: list, mc_in_mask: list) -> list:
+def find_centroid(in_pts: np.ndarray) -> np.ndarray:
     """
     Takes all Monte Carlo sample points and the in-mask of those points to find the centroid of the surface area slice
     """
+    # split in positive x and y
+    centroid_x_plus = np.mean(in_pts[in_pts[:, 0] >= 0][:, 0])
+    centroid_x_minus = np.mean(in_pts[in_pts[:, 0] < 0][:, 0])
+    centroid_y = np.mean(in_pts[:, 1])
 
-    # mc_in_mask contains both sides of the intersection
-    # use only points with positive x
-
-    in_samples = np.array(
-        [
-            mc_samples[i]
-            for i in range(len(mc_samples))
-            if mc_in_mask[i][0] and mc_in_mask[i][1] and mc_samples[i][0] >= 0
-        ]
-    )
-
-    # the centroid is the mean of all points
-    centroid_x = np.mean(in_samples[:, 0])
-    centroid_y = np.mean(in_samples[:, 1])
-
-    return [centroid_x, centroid_y]
+    return [[centroid_x_plus, centroid_y], [centroid_x_minus, centroid_y]]
 
 
 # TODO: bottle neck
@@ -198,6 +187,7 @@ def plot_2d(
     origin_t: list = [0, 0],
     pts: np.ndarray = None,
     pts_in: np.ndarray = None,
+    centroid: np.ndarray = None,
     save_path: str = "",
     show: bool = False,
 ) -> plt.Axes:
@@ -240,12 +230,13 @@ def plot_2d(
     )
     torus_r = plt.Circle((origin_t[0] - R, origin_t[1]), r, color="green", fill=False)
 
-    # box
+    # box (only x and z)
     box = box_standard(r, R)
+
     rect = mpatches.Rectangle(
-        (box[0][0], box[1][0]),
+        (box[0][0], box[2][0]),
         box[0][1] - box[0][0],
-        box[1][1] - box[1][0],
+        box[2][1] - box[2][0],
         fill=False,
         ls="-.",
         color="darkred",
@@ -255,7 +246,7 @@ def plot_2d(
     ax.add_patch(rect)
 
     # points from monte carlo sim
-    s = 0.05
+    s = 0.1
     if pts is not None:
         if pts_in is not None:
             # in and out samples
@@ -308,6 +299,18 @@ def plot_2d(
                 alpha=0.3,
                 label="out samples",
             )
+
+    if centroid is not None:
+        plt.scatter(
+            centroid[0][0],
+            centroid[0][1],
+            color="darkblue",
+            marker="o",
+            s=25,
+            label="centroid",
+        )
+
+        plt.scatter(centroid[1][0], centroid[1][1], color="darkblue", marker="o", s=25)
 
     # plot
     ax.add_artist(sphere)
@@ -458,4 +461,10 @@ if __name__ == "__main__":
     # --- 3D plot --- (quite slow)
     # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
     # --- 2D plot ---
-    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
+    delta = 0.35 * r
+    slice_y = np.abs(pts[:, 1]) < delta
+    pts_in_2d = pts_in & slice_y
+    centroid_2d = find_centroid(pts[pts_in_2d])
+    plot_2d(
+        k, r, R, pts=pts, pts_in=pts_in, centroid=centroid_2d, save_path="img/2d.png"
+    )
