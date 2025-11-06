@@ -1,8 +1,10 @@
+from itertools import combinations, product
+
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from numpy.random import rand
-from itertools import product, combinations
 
 BBOX_STANDARD = []
 BBOX_SAMPLE = []
@@ -220,6 +222,31 @@ def surface_to_volume(R: float, surface_area: float) -> float:
     volume = surface_area * 2 * np.pi * R * surface_area
 
     return volume
+
+
+def generate_dataframe(
+    k: float, r: float, R: float, simulator: list[callable], n: int = 100_000
+) -> pd.DataFrame:
+    # 1. Run monte_carlo_2d
+    # 2. Run monte_carlo_3d
+    # 3. Run mixed_sampling
+    # 4. Run deterministic_sequence
+
+    results = []
+    for f in simulator:
+        results.append(pd.DataFrame(run_multi_executions(f, n, k, r, R)))
+
+    df = pd.concat(results, axis=1)
+    means = df.mean(axis=0)
+    stds = df.std(axis=0)
+
+    return [means, stds]
+
+
+def generate_table(means: pd.DataFrame, std: pd.DataFrame, names_methods: list[str]):
+    for i, name in enumerate(names_methods):
+
+                    
 
 
 def find_centroid(in_pts: np.ndarray) -> np.ndarray:
