@@ -39,7 +39,7 @@ def box_onesided_2d(r: float, R: float, origin: list[float] = [0.0, 0.0]) -> lis
 
 
 def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
-    dy = r
+    dy = R + r
     dx = R + r
     dz = r
 
@@ -157,7 +157,7 @@ def monte_carlo_3d(
     Estimates volume of intersection between sphere (radius k) and torus (R, r).
     """
     box = box_standard(r, R, origin=origin)  # or box_sample(r, R)
-
+    print(box)
     pts = samples(box, n)  # or deterministic_sequence(box, n)
 
     inside_sphere = sphere(pts, k)
@@ -180,10 +180,14 @@ def mixed_sampling(
     origin: list[float] = [0.0, 0.0, 0.0],
 ) -> list[float, np.ndarray, np.ndarray]:
     """
-    Estimates volume of intersection between sphere (radius k) and torus (R, r).
+    Estimates volume of intersection between sphere (radius k) and torus (R, r),
+    sampling from a box centered in (0, 0, 0) with probability p
+    and from a smaller box centered in given origin with probability (1-p).
     """
-    box1 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
-    box2 = box_standard(r, R, origin=origin)  # or box_sample(r, R)
+    box1 = box_standard(r, R, origin=origin)
+    box2 = box_sample(r, R, origin=origin)
+
+    print(f"box1 = {box1} and box2 = {box2}")
     pts1 = []
     pts2 = []
 
@@ -203,8 +207,8 @@ def mixed_sampling(
     pts1_in = inside_sphere & inside_torus
 
     # second box
-    inside_sphere = sphere(pts1, k)
-    inside_torus = torus(pts1, r, R)
+    inside_sphere = sphere(pts2, k)
+    inside_torus = torus(pts2, r, R)
     count2 = np.sum(inside_sphere & inside_torus)
     pts2_in = inside_sphere & inside_torus
 
@@ -585,6 +589,234 @@ def run_multi_executions(
     return results
 
 
+def plot_mix_2d(
+    k: float,
+    r: float,
+    R: float,
+    origin_s: list = [0, 0, 0],
+    origin_t: list = [0, 0, 0],
+    pts1: np.ndarray = None,
+    pts1_in: np.ndarray = None,
+    pts2: np.ndarray = None,
+    pts2_in: np.ndarray = None,
+    save_path: str = "",
+    show: bool = False,
+    title: str = "",
+) -> plt.Axes:
+    """
+    Plots the intersection between the sphere and the torus.
+    k: radius of the sphere
+    r: minor radius of the torus
+    R: major radius of the torus
+    """
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    max_val = np.max([k, R + r])
+    x_max = max_val * 1.2
+
+    # sphere
+    sphere = plt.Circle(origin_s, k, color="blue", fill=False)
+    k_line = plt.Line2D(
+        [origin_s[0] + 0],
+        [origin_s[2], origin_s[2] + k],
+        color="blue",
+        ls="--",
+        label="k",
+    )
+
+    # torus
+    torus_l = plt.Circle((origin_t[0] + R, origin_t[2]), r, color="green", fill=False)
+    r_line = plt.Line2D(
+        [origin_t[0] + R, origin_t[0] + R + r],
+        [origin_t[2], origin_t[2]],
+        color="orange",
+        ls="--",
+        label="r",
+    )
+    R_line = plt.Line2D(
+        [origin_t[0], origin_t[0] + R],
+        [origin_t[2], origin_t[2]],
+        color="green",
+        ls="--",
+        label="R",
+    )
+    torus_r = plt.Circle((origin_t[0] - R, origin_t[2]), r, color="green", fill=False)
+
+    # box (only x and z)
+    # from 3d:
+
+    box1 = box_standard(r, R, origin=origin_t)
+    box2 = box_sample(r, R, origin=origin_t)
+
+    if pts.shape[1] == 3:
+
+        rect1 = mpatches.Rectangle(
+            (box1[0][0], box1[2][0]),
+            box1[0][1] - box1[0][0],
+            box1[2][1] - box1[2][0],
+            fill=False,
+            ls="-.",
+            color="purple",
+            lw=2,
+            label="standard box",
+        )
+
+        rect2 = mpatches.Rectangle(
+            (box2[0][0], box2[2][0]),
+            box2[0][1] - box2[0][0],
+            box2[2][1] - box2[2][0],
+            fill=False,
+            ls="-.",
+            color="darkred",
+            lw=2,
+            label="standard box",
+        )
+        ax.add_patch(rect1)
+        ax.add_patch(rect2)
+
+    s = 0.1
+
+    if pts1 is not None:
+        if pts1_in is not None:
+            # in and out samples
+
+            # if from 3d points
+            if pts1.shape[1] == 3:
+                # slice y = 0 plane
+                delta = 0.15 * r
+                slice1_y = np.abs(pts1[:, 1]) < delta
+                pts1_in_2d = pts1_in & slice1_y
+                pts1_out_2d = ~pts1_in & slice1_y
+                # mask
+                in_pts1 = pts1[pts1_in_2d][:, [0, -1]]
+                # binary invert for out points
+                out_pts1 = pts1[pts1_out_2d][:, [0, -1]]
+            # points in 2d
+            else:
+                in_pts1 = pts1[pts1_in]
+                # binary invert for out points
+                out_pts1 = pts1[~pts1_in]
+
+            ax.scatter(
+                out_pts1[:, 0],
+                out_pts1[:, 1],
+                color="purple",
+                marker=".",
+                s=s,
+                alpha=0.7,
+                label="out samples",
+            )
+
+            ax.scatter(
+                in_pts1[:, 0],
+                in_pts1[:, 1],
+                color="blue",
+                marker=".",
+                s=s,
+                alpha=0.3,
+                label="in samples",
+            )
+        else:
+            # only out samples
+            pts1 = np.array(pts1)
+            ax.scatter(
+                pts1[:, 0],
+                pts1[:, 1],
+                color="purple",
+                marker=".",
+                s=s,
+                alpha=0.7,
+                label="out samples",
+            )
+
+    if pts2 is not None:
+        if pts2_in is not None:
+            # in and out samples
+
+            # if from 3d points
+            if pts2.shape[1] == 3:
+                # slice y = 0 plane
+                delta = 0.15 * r
+                slice2_y = np.abs(pts2[:, 1]) < delta
+                pts2_in_2d = pts2_in & slice2_y
+                pts2_out_2d = ~pts2_in & slice2_y
+                # mask
+                in_pts2 = pts2[pts2_in_2d][:, [0, -1]]
+                # binary invert for out points
+                out_pts2 = pts2[pts2_out_2d][:, [0, -1]]
+            # points in 2d
+            else:
+                in_pts2 = pts2[pts2_in]
+                # binary invert for out points
+                out_pts2 = pts2[~pts2_in]
+
+            ax.scatter(
+                out_pts2[:, 0],
+                out_pts2[:, 1],
+                color="orange",
+                marker=".",
+                s=s,
+                alpha=0.5,
+                label="out samples",
+            )
+
+            ax.scatter(
+                in_pts2[:, 0],
+                in_pts2[:, 1],
+                color="darkblue",
+                marker=".",
+                s=s,
+                alpha=0.3,
+                label="in samples",
+            )
+        else:
+            # only out samples
+            pts2 = np.array(pts2)
+            ax.scatter(
+                pts2[:, 0],
+                pts2[:, 1],
+                color="orange",
+                marker=".",
+                s=s,
+                alpha=0.5,
+                label="out samples",
+            )
+
+    # plot
+    ax.add_artist(sphere)
+    ax.add_artist(k_line)
+    ax.add_artist(torus_l)
+    ax.add_artist(torus_r)
+    ax.add_artist(r_line)
+    ax.add_artist(R_line)
+
+    # plot origin
+    plt.scatter(origin_s[0], origin_s[2], color="blue", marker="x")
+    plt.scatter(origin_t[0], origin_t[2], color="green", marker="x")
+    # limits
+    ax.set_xlim([-x_max, x_max])
+    ax.set_ylim([-x_max, x_max])
+    if title:
+        ax.set_title(title)
+    else:
+        ax.set_title("2D cross-section of Sphere and Torus")
+
+    # nicer plot
+    plt.legend()
+    plt.tight_layout()
+    plt.grid()
+
+    # show flag
+    if show:
+        plt.show()
+
+    # save if path is there
+    if save_path:
+        fig.savefig(save_path, dpi=300)
+
+    return ax
+
+
 if __name__ == "__main__":
     # Parameters
     seed_deterministic = np.random.rand(3)
@@ -598,9 +830,9 @@ if __name__ == "__main__":
     # print(sequence)
     # --- Monte Carlo volume estimation ---
 
-    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n, origin=origin_shift)
-    print(pts.shape, pts_in.shape)
-    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.9f}")
+    #    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n)
+    #    print(pts.shape, pts_in.shape)
+    #    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.9f}")
     # --- 3D plot --- (quite slow)
     # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
     # --- 2D plot ---
@@ -608,24 +840,49 @@ if __name__ == "__main__":
     # slice_y = np.abs(pts[:, 1]) < delta
     # pts_in_2d = pts_in & slice_y
     # centroid_2d = find_centroid(pts[pts_in_2d])
-    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
+    #    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
+
+    # --- Monte Carlo volume estimation via 2D simplification ---
+    #    estimated_volume_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r, R, n)
+    #    plot_2d(
+    #        k,
+    #        r,
+    #        R,
+    #        pts=pts_2d,
+    #        pts_in=pts_in_2d,
+    #        centroid=find_centroid(pts_2d[pts_in_2d]),
+    #        save_path="img/2d_estimate_via_2d.png",
+    #        title="2D cross-section based on 2D estimation method",
+    #    )
+    #    print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
+
+    # --- Monte Carlo volume estimation with mixed sampling ---
+
+    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n, origin=origin_shift)
+    print(
+        f"Estimated intersection volume (sphere ∩ torus) with torus' origin shifted: {estimated_volume:.9f}"
+    )
 
     estimated_volume_mix, (pts1, pts1_in), (pts2, pts2_in) = mixed_sampling(
         k, r, R, 0.5, n, origin=origin_shift
     )
-    print(pts1.shape, pts1_in.shape, pts2.shape, pts2_in.shape)
-    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume_mix:.4f}")
+    print(
+        f"shape of pt1, pt1_in: {pts1.shape, pts1_in.shape}, shape of pt2, pt2_in: { pts2.shape, pts2_in.shape}"
+    )
+    print(
+        f"Estimated intersection volume (sphere ∩ torus) with mixed sampling and torus' origin shifted: {estimated_volume_mix:.9f}"
+    )
 
-    # --- Monte Carlo volume estimation via 2D simplification ---
-    estimated_volume_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r, R, n)
-    plot_2d(
+    plot_mix_2d(
         k,
         r,
         R,
-        pts=pts_2d,
-        pts_in=pts_in_2d,
-        centroid=find_centroid(pts_2d[pts_in_2d]),
-        save_path="img/2d_estimate_via_2d.png",
-        title="2D cross-section based on 2D estimation method",
+        origin_t=origin_shift,
+        pts1=pts1,
+        pts1_in=pts1_in,
+        pts2=pts2,
+        pts2_in=pts2_in,
+        show=True,
+        save_path="img/mix_sampling_2d.png",
+        title="2D cross-section of miixture sampling",
     )
-    print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
