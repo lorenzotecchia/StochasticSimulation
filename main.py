@@ -4,6 +4,7 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from numpy.random import rand
 
 BBOX_STANDARD = []
@@ -237,7 +238,7 @@ def generate_dataframe(
     # 4. Run deterministic_sequence
 
     results = []
-    for f in simulator:
+    for f in tqdm(simulator):
         results.append(pd.DataFrame(run_multi_executions(f, n, k, r, R)))
 
     df = pd.concat(results, axis=1)
@@ -248,9 +249,15 @@ def generate_dataframe(
 
 
 def generate_table(means: pd.DataFrame, std: pd.DataFrame, names_methods: list[str]):
-    for i, name in enumerate(names_methods):
 
-                    
+    table = pd.DataFrame(
+        {
+            "Method": names_methods,
+            "Mean Volume": means.values,
+            "Std Dev": std.values,
+        }
+    )
+    table.to_latex(buf="img/table.tex", index=False)
 
 
 def find_centroid(in_pts: np.ndarray) -> np.ndarray:
@@ -886,3 +893,9 @@ if __name__ == "__main__":
         save_path="img/mix_sampling_2d.png",
         title="2D cross-section of miixture sampling",
     )
+
+    # --- Generate results table ---
+    simulator = [monte_carlo_2d, monte_carlo_3d, mixed_sampling]
+    names_methods = ["2D MC", "3D MC", "Mixed Sampling"]
+    means, std = generate_dataframe(k, r, R, simulator, n)
+    generate_table(means, std, names_methods)
