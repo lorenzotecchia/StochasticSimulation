@@ -192,36 +192,41 @@ def mixed_sampling(
     Estimates the volume of intersection between a sphere (radius k) and a torus (R, r)
     using mixed Monte Carlo sampling.
 
-    With probability `p`, samples are drawn from a standard box centered at (0, 0, 0),
-    and with probability (1 - p), from a smaller box centered at a shifted `origin`.
-    Returns the estimated volume and the sampled points with in-mask for both sampling methods.
+    Each of the n samples is drawn from:
+      - box1 (centered at 0) with probability `p`
+      - box2 (centered at `origin`) with probability (1 - p)
     """
     if origin is None:
         origin = [0.0, 0.0, 0.0]
 
-    # --- Vectorized sampling ---
-    n1 = int(p * n)
-    n2 = n - n1
-
-    box1 = box_standard(r, R, origin=origin)
+    # Boxes
+    box1 = box_standard(r, R)
     box2 = box_sample(r, R, origin=origin)
 
+    # --- Randomly assign which box each point will come from ---
+    # 0 → box1, 1 → box2
+    choices = np.random.choice([0, 1], size=n, p=[p, 1 - p])
+
+    # Count how many per box
+    n1 = np.count_nonzero(choices == 0)
+    n2 = n - n1
+
+    # --- Sample points ---
     pts1 = samples(box1, n1)
     pts2 = samples(box2, n2)
 
-    # --- Evaluate intersection for box1 ---
+    # --- Evaluate intersection for each box ---
     mask1 = sphere(pts1, k) & torus(pts1, r, R)
-    count1 = np.count_nonzero(mask1)
-
-    # --- Evaluate intersection for box2 ---
     mask2 = sphere(pts2, k) & torus(pts2, r, R)
-    count2 = np.count_nonzero(mask2)
 
-    # --- Combine estimates (weighted average) ---
+    # --- Volume estimates per box ---
     vol1 = box_volume(box1)
     vol2 = box_volume(box2)
 
-    result = p * (count1 / n1 * vol1) + (1 - p) * (count2 / n2 * vol2)
+    # Monte Carlo estimate: weighted by proportion of total points drawn from each box
+    result = (np.sum(mask1) / n1 * vol1) * (n1 / n) + (np.sum(mask2) / n2 * vol2) * (
+        n2 / n
+    )
 
     return result, ((pts1, mask1), (pts2, mask2))
 
