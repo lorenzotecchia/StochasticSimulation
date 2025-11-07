@@ -1,6 +1,7 @@
 from itertools import combinations, product
 
 import matplotlib.patches as mpatches
+from scipy.stats import norm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -343,7 +344,7 @@ def plot_2d(
     # from 3d:
     if pts.shape[1] == 3:
 
-        box = box_standard(r, R)
+        box = box_standard(r, R, origin=[0, *origin_t])
 
         rect = mpatches.Rectangle(
             (box[0][0], box[2][0]),
@@ -481,6 +482,8 @@ def plot_3d(
     R: float,
     pts: np.ndarray | None = None,
     pts_in: np.ndarray | None = None,
+    save_path: str = "",
+    show=False,
 ) -> Axes:
     """
     Plots the intersection between the sphere and the torus in 3D.
@@ -570,8 +573,12 @@ def plot_3d(
     ax.set_ylabel("Y axis")
     ax.set_zlabel("Z axis")
     plt.tight_layout()
-    plt.show()
+    if show:
+        plt.show()
 
+    # save if path is there
+    if save_path:
+        fig.savefig(save_path, dpi=300)
     return ax
 
 
@@ -826,47 +833,215 @@ def plot_mix_2d(
     return ax
 
 
+def plot_volume_histogram(
+    list_of_volumes: list[list[float]], case_labels: list[str], save_path: str
+):
+    fig, axs = plt.subplots(
+        int(len(list_of_volumes) / 2),
+        2,
+        figsize=(4 * len(list_of_volumes), 8),
+        sharex="col",
+    )
+    n = len(list_of_volumes[0])
+    for i, volumes in enumerate(list_of_volumes):
+        # histogram
+        axs[i // 2, i % 2].hist(volumes, bins=100, color="skyblue", density=True)
+
+        # fit gaussian
+        mu = np.mean(volumes)
+        std = np.std(volumes)
+        xmin = min(volumes)
+        xmax = max(volumes)
+        x = np.linspace(xmin, xmax, 100)
+
+        # normed to bin width
+        y = norm.pdf(x, mu, std)
+
+        axs[i // 2, i % 2].plot(
+            x,
+            y,
+            "r--",
+            linewidth=2,
+        )
+
+        # plot one sigma lines only until it hits the normal curve
+        axs[i // 2, i % 2].vlines(
+            mu,
+            ymin=0,
+            ymax=norm.pdf(mu, mu, std),
+            color="darkblue",
+            linestyle="--",
+            label=r"$\mu$",
+        )
+        axs[i // 2, i % 2].vlines(
+            mu + std,
+            ymin=0,
+            ymax=norm.pdf(mu + std, mu, std),
+            color="darkgreen",
+            linestyle="--",
+            label=r"$+\sigma$",
+        )
+        axs[i // 2, i % 2].vlines(
+            mu - std,
+            ymin=0,
+            ymax=norm.pdf(mu - std, mu, std),
+            color="darkgreen",
+            linestyle="--",
+            label=r"$-\sigma$",
+        )
+        axs[i // 2, i % 2].set_title(f"{case_labels[i]}")
+        axs[i // 2, i % 2].set_xlabel("Estimated Volume")
+        axs[i // 2, i % 2].set_ylabel("Frequency")
+
+    axs[0, 0].legend()
+    plt.suptitle(f"Histograms of Volume Estimates over {n} runs", fontsize=16)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
 if __name__ == "__main__":
     # Parameters
     seed_deterministic = np.random.rand(3)
     k = 1.0  # sphere radius
-    r = 0.4  # torus minor radius
-    R = 0.75  # torus major radius
+    r_a = 0.4  # torus minor radius
+    R_a = 0.75  # torus major radius
+    r_b = 0.5
+    R_b = 0.5
     n = 100_000  # Monte Carlo samples
     origin_shift = [0.0, 0.0, 0.1]
+    n_runs = 1000
 
-    # --- Monte Carlo volume estimation with mixed sampling ---
+    Q1 = False
 
-    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n, origin=origin_shift)
-    print(
-        f"Estimated intersection volume (sphere ∩ torus) with torus' origin shifted: {estimated_volume:.9f}"
-    )
+    # Question 1: volume of intersection between sphere and torus.
+    if Q1:
+        # case a:
+        volumes_a = run_multi_executions(monte_carlo_3d, n_runs - 1, k, r_a, R_a)
+        estimated_volume_a_3d, (pts, pts_in) = monte_carlo_3d(k, r_a, R_a, n)
+        volumes_a.append(estimated_volume_a_3d)
+        avg_volume_a = np.mean(volumes_a)
+        std_volume_a = np.std(volumes_a)
 
-    estimated_volume_mix, ((pts1, pts1_in), (pts2, pts2_in)) = mixed_sampling(
-        k, r, R, n, p=0.5, origin=origin_shift
+        plot_2d(k, r_a, R_a, pts=pts, pts_in=pts_in, save_path="img/case_a_2d.png")
+        plot_3d(k, r_a, R_a, pts=pts, pts_in=pts_in, save_path="img/case_a_3d.png")
+
+        # case b:
+        volumes_b = run_multi_executions(monte_carlo_3d, n_runs - 1, k, r_b, R_b)
+        estimated_volume_b_3d, (pts, pts_in) = monte_carlo_3d(k, r_b, R_b, n)
+        volumes_b.append(estimated_volume_b_3d)
+        avg_volume_b = np.mean(volumes_b)
+        std_volume_b = np.std(volumes_b)
+
+        plot_2d(k, r_b, R_b, pts=pts, pts_in=pts_in, save_path="img/case_b_2d.png")
+        plot_3d(k, r_b, R_b, pts=pts, pts_in=pts_in, save_path="img/case_b_3d.png")
+
+        # case a but with 2d MC approximation
+        volumes_a_2d = run_multi_executions(monte_carlo_2d, n_runs - 1, k, r_a, R_a)
+        estimated_volume_a_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r_a, R_a, n)
+        volumes_a_2d.append(estimated_volume_a_2d)
+        avg_volume_a_2d = np.mean(volumes_a_2d)
+        std_volume_a_2d = np.std(volumes_a_2d)
+
+        plot_2d(
+            k,
+            r_a,
+            R_a,
+            pts=pts_2d,
+            pts_in=pts_in_2d,
+            save_path="img/case_a_2d_from_2d.png",
+        )
+
+        # case b but with 2d MC approximation
+        volumbes_b_2d = run_multi_executions(monte_carlo_2d, n_runs - 1, k, r_b, R_b)
+        estimated_volume_b_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r_b, R_b, n)
+        volumbes_b_2d.append(estimated_volume_b_2d)
+        avg_volume_b_2d = np.mean(volumbes_b_2d)
+        std_volume_b_2d = np.std(volumbes_b_2d)
+
+        plot_2d(
+            k,
+            r_b,
+            R_b,
+            pts=pts_2d,
+            pts_in=pts_in_2d,
+            save_path="img/case_b_2d_from_2d.png",
+        )
+
+        print(f"----- Monte Carlo Volume Estimation Results over {n_runs} runs -----")
+        print(
+            f"Q1, Case A 3D || Mean: {avg_volume_a:.9f} || Standard Deviation: {std_volume_a:.9f}"
+        )
+        print(
+            f"Q1, Case B 3D || Mean: {avg_volume_b:.9f} || Standard Deviation: {std_volume_b:.9f}"
+        )
+        print(
+            f"Q1, Case A 2D || Mean: {avg_volume_a_2d:.9f} || Standard Deviation: {std_volume_a_2d:.9f}"
+        )
+        print(
+            f"Q1, Case B 2D || Mean: {avg_volume_b_2d:.9f} || Standard Deviation: {std_volume_b_2d:.9f}"
+        )
+
+        plot_volume_histogram(
+            [volumes_a, volumes_b, volumes_a_2d, volumbes_b_2d],
+            ["Case A 3D", "Case B 3D", "Case A 2D", "Case B 2D"],
+            "img/volume_histograms.png",
+        )
+
+    # Question 2: change in estimate and error for determinstic sequence
+
+    # Question 3: Off center torus
+    # a) estimate volume
+    volumes_offcenter = []
+    volume_offcenter, (pts, pts_in) = monte_carlo_3d(
+        k, r_a, R_a, n, origin=origin_shift
     )
+    volumes_offcenter.append(volume_offcenter)
+    for i in range(n_runs - 1):
+        volume_offcenter, _ = monte_carlo_3d(k, r_a, R_a, n, origin=origin_shift)
+        volumes_offcenter.append(volume_offcenter)
+
+    avg_volume_offcenter = np.mean(volumes_offcenter)
+    std_volume_offcenter = np.std(volumes_offcenter)
+
+    plot_2d(
+        k,
+        r_a,
+        R_a,
+        origin_t=origin_shift[-2:],
+        pts=pts,
+        pts_in=pts_in,
+        save_path="img/q3a_2d.png",
+    )
+    # plot_3d(k, r_a, R_a, pts=pts, pts_in=pts_in, save_path="img/q3a_3d.png")
     print(
-        f"shape of pt1, pt1_in: {pts1.shape, pts1_in.shape}, shape of pt2, pt2_in: { pts2.shape, pts2_in.shape}"
+        f"Q3, a) || Mean: {avg_volume_offcenter:.9f} || Standard Deviation: {std_volume_offcenter:.9f}"
     )
-    print(
-        f"Estimated intersection volume (sphere ∩ torus) with mixed sampling and torus' origin shifted: {estimated_volume_mix:.9f}"
+    # b) mixed sampling
+    p = 0.5
+    volumes_mixed = []
+    volume_mixed, ((pts1, pts1_in), (pts2, pts2_in)) = mixed_sampling(
+        k, r_a, R_a, n=n, p=p, origin=origin_shift
     )
+    volumes_mixed.append(volume_mixed)
+    for i in range(n_runs - 1):
+        volume_mixed, _ = mixed_sampling(k, r_a, R_a, n=n, p=p, origin=origin_shift)
+        volumes_mixed.append(volume_mixed)
+
+    avg_volume_mixed = np.mean(volumes_mixed)
+    std_volume_mixed = np.std(volumes_mixed)
 
     plot_mix_2d(
         k,
-        r,
-        R,
+        r_a,
+        R_a,
         origin_t=origin_shift,
-        pts1=pts1,
-        pts1_in=pts1_in,
-        pts2=pts2,
-        pts2_in=pts2_in,
-        show=True,
-        save_path="img/mix_sampling_2d.png",
-        title="2D cross-section of miixture sampling",
+    )
+    print(
+        f"Q3, b) || Mean: {avg_volume_mixed:.9f} || Standard Deviation: {std_volume_mixed:.9f}"
     )
 
     # --- Generate results table ---
-    names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
-    means, std = generate_dataframe(k, r, R, n=1_000)
-    generate_table(means, std, names_methods)
+    # names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
+    # means, std = generate_dataframe(k, r, R, n=1_000)
+    # generate_table(means, std, names_methods)
