@@ -196,6 +196,11 @@ def mixed_sampling(
     Each of the n samples is drawn from:
       - box1 (centered at 0) with probability `p`
       - box2 (centered at `origin`) with probability (1 - p)
+
+    Returns:
+        tuple:
+            - result (float): Estimated intersection volume.
+            - ((pts1, mask1), (pts2, mask2)): Points and inside-mask for both boxes.
     """
     if origin is None:
         origin = [0.0, 0.0, 0.0]
@@ -208,7 +213,7 @@ def mixed_sampling(
     # 0 → box1, 1 → box2
     choices = np.random.choice([0, 1], size=n, p=[p, 1 - p])
 
-    # Count how many per box
+    # Count how many per box (not deterministic anymore)
     n1 = np.count_nonzero(choices == 0)
     n2 = n - n1
 
@@ -216,8 +221,9 @@ def mixed_sampling(
     pts1 = samples(box1, n1)
     pts2 = samples(box2, n2)
 
-    mask1 = sphere(pts1, k) & torus(pts1, r, R, origin=origin)
-    count1 = np.count_nonzero(mask1)
+    # --- Evaluate intersection for each box ---
+    mask1 = sphere(pts1, k) & torus(pts1, r, R)
+    mask2 = sphere(pts2, k) & torus(pts2, r, R)
 
     # --- Volume estimates per box ---
     vol1 = box_volume(box1)
