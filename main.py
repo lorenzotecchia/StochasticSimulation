@@ -6,11 +6,8 @@ from scipy.stats import norm
 from itertools import combinations, product
 from mpl_toolkits.axes_grid1 import host_subplot
 from matplotlib.axes import Axes
-<<<<<<< Updated upstream
 from numba import njit
 from scipy.stats import norm
-=======
->>>>>>> Stashed changes
 from tqdm import tqdm
 
 
@@ -168,14 +165,8 @@ def monte_carlo_3d(
     """
     box = box_standard(r, R, origin=origin)  # or box_sample(r, R)
     if deterministic:
-<<<<<<< Updated upstream
         box = np.array(box, dtype=np.float64)
         pts = deterministic_sequence(np.random.uniform(0, 1, 3), box)
-=======
-        pts = deterministic_sequence(np.mean(box, axis=1), n)
-        print(box)
-        print(pts)
->>>>>>> Stashed changes
     else:
         pts = samples(box, n)  # deterministic_sequence(box, n)
 
@@ -220,11 +211,11 @@ def mixed_sampling(
     pts2 = samples(box2, n2)
 
     # --- Evaluate intersection for box1 ---
-    mask1 = sphere(pts1, k) & torus(pts1, r, R)
+    mask1 = sphere(pts1, k) & torus(pts1, r, R, origin=origin)
     count1 = np.count_nonzero(mask1)
 
     # --- Evaluate intersection for box2 ---
-    mask2 = sphere(pts2, k) & torus(pts2, r, R)
+    mask2 = sphere(pts2, k) & torus(pts2, r, R, origin=origin)
     count2 = np.count_nonzero(mask2)
 
     # --- Combine estimates (weighted average) ---
@@ -313,6 +304,7 @@ def deterministic_sequence(
     z = np.empty(n)
 
     x[0], y[0], z[0] = points[0], points[1], points[2]
+
     for i in range(1, n):
         x[i] = 3.8 * x[i - 1] * (1 - x[i - 1])
         y[i] = 3.8 * y[i - 1] * (1 - y[i - 1])
@@ -700,7 +692,7 @@ def plot_mix_2d(
     box1 = box_standard(r, R, origin=origin_t)
     box2 = box_sample(r, R, origin=origin_t)
 
-    if pts.shape[1] == 3:
+    if pts1.shape[1] == 3:
 
         rect1 = mpatches.Rectangle(
             (box1[0][0], box1[2][0]),
@@ -875,12 +867,15 @@ def plot_volume_histogram(
     """
     Plots histograms of volume estimates with Gaussian fits for multiple cases.
     """
+    rows = int(len(list_of_volumes) // 2)
+    cols = 2
     fig, axs = plt.subplots(
-        int(len(list_of_volumes) / 2),
-        2,
-        figsize=(4 * len(list_of_volumes), 8),
+        rows,
+        cols,
+        figsize=(4 * cols, 4 * rows),
         sharex="col",
     )
+    axs = np.atleast_2d(axs)
     n = len(list_of_volumes[0])
     for i, volumes in enumerate(list_of_volumes):
         # histogram
@@ -949,12 +944,12 @@ if __name__ == "__main__":
     R_b = 0.5
     n = 100_000  # Monte Carlo samples
     origin_shift = [0.0, 0.0, 0.1]
-    n_runs = 10
+    n_runs = 1000
 
     Q1 = False
-    Q2 = True
+    Q2 = False
     Q3 = False
-    PSWEEP = False
+    PSWEEP = True
 
     # Question 1: volume of intersection between sphere and torus.
     if Q1:
@@ -1025,9 +1020,19 @@ if __name__ == "__main__":
         )
 
         plot_volume_histogram(
-            [volumes_a, volumes_b, volumes_a_2d, volumbes_b_2d],
-            ["Case A 3D", "Case B 3D", "Case A 2D", "Case B 2D"],
-            "img/volume_histograms.png",
+            [
+                volumes_a,
+                volumes_b,
+                volumes_a_2d,
+                volumbes_b_2d,
+            ],
+            [
+                "Case A 3D",
+                "Case B 3D",
+                "Case A 2D",
+                "Case B 2D",
+            ],
+            "img/q1_volume_histograms.png",
         )
 
     # Question 2: change in estimate and error for determinstic sequence
@@ -1042,7 +1047,6 @@ if __name__ == "__main__":
             volumes_deterministic_a, estimated_volume_deterministic_a
         )
 
-        print(volumes_deterministic_a)
         avg_volume_deterministic_a = np.mean(volumes_deterministic_a)
         std_volume_deterministic_a = np.std(volumes_deterministic_a)
 
@@ -1076,6 +1080,15 @@ if __name__ == "__main__":
         )
         print(
             f"Q2, Deterministic Case B || Mean: {avg_volume_deterministic_b:.9f} || Standard Deviation: {std_volume_deterministic_b:.9f}"
+        )
+
+        plot_volume_histogram(
+            [
+                volumes_deterministic_a,
+                volumes_deterministic_b,
+            ],
+            ["Case A Deterministic", "Case B Deterministic"],
+            "img/q2_volume_histograms.png",
         )
 
     # Question 3: Off center torus
@@ -1126,7 +1139,13 @@ if __name__ == "__main__":
             r_a,
             R_a,
             origin_t=origin_shift,
+            save_path="img/q3b_2d.png",
+            pts1=pts1,
+            pts1_in=pts1_in,
+            pts2=pts2,
+            pts2_in=pts2_in,
         )
+
         print(
             f"Q3, b) || Mean: {avg_volume_mixed:.9f} || Standard Deviation: {std_volume_mixed:.9f}"
         )
@@ -1167,9 +1186,9 @@ if __name__ == "__main__":
         plt.close()
 
     # --- Generate results table ---
-    names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
-    means, std = generate_dataframe(k, r_a, R_a, n=100)
-    generate_table(means, std, names_methods)
-    count_monte_det, (pts_monte_det, pts_in_monte_det) = monte_carlo_3d(
-        k, r_a, R_a, deterministic=True
-    )
+    # names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
+    # means, std = generate_dataframe(k, r_a, R_a, n=100)
+    # generate_table(means, std, names_methods)
+    # count_monte_det, (pts_monte_det, pts_in_monte_det) = monte_carlo_3d(
+    #    k, r_a, R_a, deterministic=True
+    # )
