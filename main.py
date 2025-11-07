@@ -4,8 +4,9 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from matplotlib.axes import Axes
 from numpy.random import rand
+from tqdm import tqdm
 
 BBOX_STANDARD = []
 BBOX_SAMPLE = []
@@ -79,18 +80,6 @@ def sphere(samples: np.ndarray, k: float) -> np.ndarray:
     return mask
 
 
-# TODO: this ok ?
-def torus2D(x: float, y: float, r: float, R: float, origin: list = [0, 0]) -> bool:
-    """
-    Returns true if the given points (x, y, z) is inside the torus defined by the
-    major radius R and the minor radius r.
-    """
-    result = ((x - origin[0] - R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0) or (
-        (x - origin[0] + R) ** 2 + (y - origin[1]) ** 2 - r**2 <= 0
-    )
-    return result
-
-
 def samples(
     box: list[list[float]],
     n: int = 100_000,
@@ -115,7 +104,9 @@ def samples_2d(
     return samples
 
 
-def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
+def monte_carlo_2d(
+    k: float, r: float, R: float, n: int = 100_000
+) -> tuple[float, tuple[np.ndarray, np.ndarray]]:
     """
     Estimates area of intersection between circle (radius k) and torus (R, r).
     """
@@ -152,14 +143,21 @@ def monte_carlo_2d(k: float, r: float, R: float, n: int = 100_000) -> float:
 
 
 def monte_carlo_3d(
-    k: float, r: float, R: float, n: int = 100_000, origin: list = [0.0, 0.0, 0.0]
-) -> list[float, np.ndarray]:
+    k: float,
+    r: float,
+    R: float,
+    n: int = 100_000,
+    origin: list = [0.0, 0.0, 0.0],
+    deterministic: bool = False,
+) -> tuple[float, tuple[np.ndarray, np.ndarray]]:
     """
     Estimates volume of intersection between sphere (radius k) and torus (R, r).
     """
     box = box_standard(r, R, origin=origin)  # or box_sample(r, R)
-    print(box)
-    pts = samples(box, n)  # or deterministic_sequence(box, n)
+    if deterministic:
+        pts = deterministic_sequence(np.mean(box, axis=1), n)
+    else:
+        pts = samples(box, n)  # deterministic_sequence(box, n)
 
     inside_sphere = sphere(pts, k)
     inside_torus = torus(pts, r, R, origin=origin)
@@ -176,48 +174,45 @@ def mixed_sampling(
     k: float,
     r: float,
     R: float,
-    p: float,
     n: int = 100_000,
-    origin: list[float] = [0.0, 0.0, 0.0],
-) -> list[float, np.ndarray, np.ndarray]:
+    p: float = 0.5,
+    origin: list[float] | None = None,
+) -> tuple[float, tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]]:
     """
-    Estimates volume of intersection between sphere (radius k) and torus (R, r),
-    sampling from a box centered in (0, 0, 0) with probability p
-    and from a smaller box centered in given origin with probability (1-p).
+    Estimates the volume of intersection between a sphere (radius k) and a torus (R, r)
+    using mixed Monte Carlo sampling.
+
+    With probability `p`, samples are drawn from a standard box centered at (0, 0, 0),
+    and with probability (1 - p), from a smaller box centered at a shifted `origin`.
     """
+    if origin is None:
+        origin = [0.0, 0.0, 0.0]
+
+    # --- Vectorized sampling ---
+    n1 = int(p * n)
+    n2 = n - n1
+
     box1 = box_standard(r, R, origin=origin)
     box2 = box_sample(r, R, origin=origin)
 
-    print(f"box1 = {box1} and box2 = {box2}")
-    pts1 = []
-    pts2 = []
+    pts1 = samples(box1, n1)
+    pts2 = samples(box2, n2)
 
-    for _ in range(n):
-        rnd = rand()
-        if rnd <= p:
-            pts1.append(samples(box1, 1)[0])
+    # --- Evaluate intersection for box1 ---
+    mask1 = sphere(pts1, k) & torus(pts1, r, R)
+    count1 = np.count_nonzero(mask1)
 
-        else:
-            pts2.append(samples(box2, 1)[0])
-    # first box:
-    pts1 = np.array(pts1)
-    pts2 = np.array(pts2)
-    inside_sphere = sphere(pts1, k)
-    inside_torus = torus(pts1, r, R)
-    count1 = np.sum(inside_sphere & inside_torus)
-    pts1_in = inside_sphere & inside_torus
+    # --- Evaluate intersection for box2 ---
+    mask2 = sphere(pts2, k) & torus(pts2, r, R)
+    count2 = np.count_nonzero(mask2)
 
-    # second box
-    inside_sphere = sphere(pts2, k)
-    inside_torus = torus(pts2, r, R)
-    count2 = np.sum(inside_sphere & inside_torus)
-    pts2_in = inside_sphere & inside_torus
+    # --- Combine estimates (weighted average) ---
+    vol1 = box_volume(box1)
+    vol2 = box_volume(box2)
 
-    result = p * (count1 / len(pts1) * box_volume(box1)) + (1 - p) * (
-        count2 / len(pts2) * box_volume(box2)
-    )
+    result = p * (count1 / n1 * vol1) + (1 - p) * (count2 / n2 * vol2)
 
-    return result, (pts1, pts1_in), (pts2, pts2_in)
+    return result, ((pts1, mask1), (pts2, mask2))
 
 
 def surface_to_volume(R: float, surface_area: float) -> float:
@@ -230,22 +225,27 @@ def surface_to_volume(R: float, surface_area: float) -> float:
 
 
 def generate_dataframe(
-    k: float, r: float, R: float, simulator: list[callable], n: int = 100_000
-) -> pd.DataFrame:
+    k: float, r: float, R: float, n: int = 100_000
+) -> tuple[pd.Series, pd.Series]:
     # 1. Run monte_carlo_2d
     # 2. Run monte_carlo_3d
     # 3. Run mixed_sampling
     # 4. Run deterministic_sequence
 
     results = []
-    for f in tqdm(simulator):
-        results.append(pd.DataFrame(run_multi_executions(f, n, k, r, R)))
-
+    results.append(pd.DataFrame(run_multi_executions(monte_carlo_2d, n, k, r, R)))
+    results.append(pd.DataFrame(run_multi_executions(monte_carlo_3d, n, k, r, R)))
+    results.append(pd.DataFrame(run_multi_executions(mixed_sampling, n, k, r, R)))
+    results.append(
+        pd.DataFrame(
+            run_multi_executions(monte_carlo_3d, n, k, r, R, deterministic=True)
+        )
+    )
     df = pd.concat(results, axis=1)
     means = df.mean(axis=0)
     stds = df.std(axis=0)
 
-    return [means, stds]
+    return means, stds
 
 
 def generate_table(means: pd.DataFrame, std: pd.DataFrame, names_methods: list[str]):
@@ -273,24 +273,18 @@ def find_centroid(in_pts: np.ndarray) -> np.ndarray:
     return [[centroid_x_plus, centroid_y], [centroid_x_minus, centroid_y]]
 
 
-# TODO: bottle neck
 def deterministic_sequence(points: np.ndarray, n: int = 100_000) -> np.ndarray:
-    """
-    Generates a deterministic sequence of numbers
-    based on the seed. Must be between 0 and 1.
-    """
-    x_0, y_0, z_0 = points[1], points[1], points[2]
+    x = np.empty(n)
+    y = np.empty(n)
+    z = np.empty(n)
 
-    samples = np.random.uniform(0, 0, size=(n, 3))
-    for i in range(n):
-        x_0 = (x_0 * 3.8 * (1 - x_0)) % 1
-        y_0 = (y_0 * 3.8 * (1 - y_0)) % 1
-        z_0 = (z_0 * 3.8 * (1 - z_0)) % 1
-        samples[i, 0] = x_0
-        samples[i, 1] = y_0
-        samples[i, 2] = z_0
+    x[0], y[0], z[0] = points[:3]
+    for i in range(1, n):
+        x[i] = 3.8 * x[i - 1] * (1 - x[i - 1])
+        y[i] = 3.8 * y[i - 1] * (1 - y[i - 1])
+        z[i] = 3.8 * z[i - 1] * (1 - z[i - 1])
 
-    return samples
+    return np.stack((x, y, z), axis=1)
 
 
 def plot_2d(
@@ -299,13 +293,13 @@ def plot_2d(
     R: float,
     origin_s: list = [0, 0],
     origin_t: list = [0, 0],
-    pts: np.ndarray = None,
-    pts_in: np.ndarray = None,
-    centroid: np.ndarray = None,
+    pts: np.ndarray | None = None,
+    pts_in: np.ndarray | None = None,
+    centroid: np.ndarray | None = None,
     save_path: str = "",
     show: bool = False,
     title: str = "",
-) -> plt.Axes:
+) -> Axes:
     """
     Plots the intersection between the sphere and the torus.
     k: radius of the sphere
@@ -482,8 +476,12 @@ def plot_2d(
 
 
 def plot_3d(
-    k: float, r: float, R: float, pts: np.ndarray = None, pts_in: np.ndarray = None
-) -> plt.Axes:
+    k: float,
+    r: float,
+    R: float,
+    pts: np.ndarray | None = None,
+    pts_in: np.ndarray | None = None,
+) -> Axes:
     """
     Plots the intersection between the sphere and the torus in 3D.
     k: radius of the sphere
@@ -583,16 +581,20 @@ def run_multi_executions(
     k: float,
     r: float,
     R: float,
-) -> list[float]:
+    deterministic: bool = False,
+) -> np.ndarray:
     """
     Runs multiple executions of the given simulation function and returns the results.
     sim: simulation function to run
     runs: number of runs to execute
     """
-    results = []
-    for _ in range(runs):
-        result, _ = sim(k, r, R, n)
-        results.append(result)
+    results = np.empty(runs)
+    for i in tqdm(range(runs), desc="Running simulations"):
+        if deterministic:
+            result, _ = sim(k, r, R, n, deterministic=True)
+        else:
+            result, _ = sim(k, r, R, n)
+        results[i] = result
     return results
 
 
@@ -602,14 +604,14 @@ def plot_mix_2d(
     R: float,
     origin_s: list = [0, 0, 0],
     origin_t: list = [0, 0, 0],
-    pts1: np.ndarray = None,
-    pts1_in: np.ndarray = None,
-    pts2: np.ndarray = None,
-    pts2_in: np.ndarray = None,
+    pts1: np.ndarray | None = None,
+    pts1_in: np.ndarray | None = None,
+    pts2: np.ndarray | None = None,
+    pts2_in: np.ndarray | None = None,
     save_path: str = "",
     show: bool = False,
     title: str = "",
-) -> plt.Axes:
+) -> Axes:
     """
     Plots the intersection between the sphere and the torus.
     k: radius of the sphere
@@ -833,36 +835,6 @@ if __name__ == "__main__":
     n = 100_000  # Monte Carlo samples
     origin_shift = [0.0, 0.0, 0.1]
 
-    # sequence = deterministic_sequence(seed_deterministic, n)
-    # print(sequence)
-    # --- Monte Carlo volume estimation ---
-
-    #    estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n)
-    #    print(pts.shape, pts_in.shape)
-    #    print(f"Estimated intersection volume (sphere ∩ torus): {estimated_volume:.9f}")
-    # --- 3D plot --- (quite slow)
-    # plot_3d(k, r, R, pts=pts, pts_in=pts_in)
-    # --- 2D plot ---
-    # delta = 0.35 * r
-    # slice_y = np.abs(pts[:, 1]) < delta
-    # pts_in_2d = pts_in & slice_y
-    # centroid_2d = find_centroid(pts[pts_in_2d])
-    #    plot_2d(k, r, R, pts=pts, pts_in=pts_in, save_path="img/2d.png")
-
-    # --- Monte Carlo volume estimation via 2D simplification ---
-    #    estimated_volume_2d, (pts_2d, pts_in_2d) = monte_carlo_2d(k, r, R, n)
-    #    plot_2d(
-    #        k,
-    #        r,
-    #        R,
-    #        pts=pts_2d,
-    #        pts_in=pts_in_2d,
-    #        centroid=find_centroid(pts_2d[pts_in_2d]),
-    #        save_path="img/2d_estimate_via_2d.png",
-    #        title="2D cross-section based on 2D estimation method",
-    #    )
-    #    print(f"Estimated intersection volume via 2D method: {estimated_volume_2d:.9f}")
-
     # --- Monte Carlo volume estimation with mixed sampling ---
 
     estimated_volume, (pts, pts_in) = monte_carlo_3d(k, r, R, n, origin=origin_shift)
@@ -870,8 +842,8 @@ if __name__ == "__main__":
         f"Estimated intersection volume (sphere ∩ torus) with torus' origin shifted: {estimated_volume:.9f}"
     )
 
-    estimated_volume_mix, (pts1, pts1_in), (pts2, pts2_in) = mixed_sampling(
-        k, r, R, 0.5, n, origin=origin_shift
+    estimated_volume_mix, ((pts1, pts1_in), (pts2, pts2_in)) = mixed_sampling(
+        k, r, R, n, p=0.5, origin=origin_shift
     )
     print(
         f"shape of pt1, pt1_in: {pts1.shape, pts1_in.shape}, shape of pt2, pt2_in: { pts2.shape, pts2_in.shape}"
@@ -895,7 +867,6 @@ if __name__ == "__main__":
     )
 
     # --- Generate results table ---
-    simulator = [monte_carlo_2d, monte_carlo_3d, mixed_sampling]
-    names_methods = ["2D MC", "3D MC", "Mixed Sampling"]
-    means, std = generate_dataframe(k, r, R, simulator, n)
+    names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
+    means, std = generate_dataframe(k, r, R, n=1_000)
     generate_table(means, std, names_methods)
