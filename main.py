@@ -1,27 +1,35 @@
 from itertools import combinations, product
 
 import matplotlib.patches as mpatches
-from scipy.stats import norm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
-from numpy.random import rand
+from numba import njit
+from scipy.stats import norm
 from tqdm import tqdm
-
-BBOX_STANDARD = []
-BBOX_SAMPLE = []
 
 
 def box_volume(box: list) -> float:
+    """
+    Calculates the volume of a 3D box defined by its min and max coordinates along each axis.
+    """
     return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0]) * (box[2][1] - box[2][0])
 
 
 def box_2d_area(box: list) -> float:
+    """
+    Calculates the area of a 2D box defined by its min and max coordinates along each axis.
+    """
     return (box[0][1] - box[0][0]) * (box[1][1] - box[1][0])
 
 
-def box_standard(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
+def box_standard(
+    r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]
+) -> list[list]:
+    """
+    Box exactly around the torus in 3D
+    """
     dy = R + r + origin[1]
     dx = R + r + origin[0]
     dz = r + origin[2]
@@ -42,6 +50,9 @@ def box_onesided_2d(r: float, R: float, origin: list[float] = [0.0, 0.0]) -> lis
 
 
 def box_sample(r: float, R: float, origin: list[float] = [0.0, 0.0, 0.0]) -> list:
+    """
+    Smaller box shifted towards one side of the torus in 3D
+    """
     dy = R + r
     dx = R + r
     dz = r
@@ -85,6 +96,10 @@ def samples(
     box: list[list[float]],
     n: int = 100_000,
 ):
+    """
+    Generates n random samples within the given 3D box.
+    """
+
     min_x, min_y, min_z = box[0][0], box[1][0], box[2][0]
     max_x, max_y, max_z = box[0][1], box[1][1], box[2][1]
 
@@ -98,6 +113,9 @@ def samples_2d(
     box: list[list[float]],
     n: int = 100_000,
 ):
+    """
+    Generates n random samples within the given 2D box.
+    """
     min_x, min_z = box[0][0], box[1][0]
     max_x, max_z = box[0][1], box[1][1]
 
@@ -110,34 +128,23 @@ def monte_carlo_2d(
 ) -> tuple[float, tuple[np.ndarray, np.ndarray]]:
     """
     Estimates area of intersection between circle (radius k) and torus (R, r).
+    Uses the method of Pappus to convert area to volume.
+    Returns estimated volume and the sampled points with in-mask.
     """
-    # box in x and z only (new x-y sytem defined here)
     box = box_onesided_2d(r, R)
-
-    # pts in 2d
     pts = samples_2d(box, n)
-
-    # add zero z cooridinate for sphere and torus function compatibility
     pts_3d = np.hstack((pts[:, 0:1], np.zeros((pts.shape[0], 1)), pts[:, 1:2]))
 
     inside_sphere = sphere(pts_3d, k)
     inside_torus = torus(pts_3d, r, R)
 
-    # add points inside
     count = np.sum(inside_sphere & inside_torus)
-
-    # in points boolean mask
     pts_in = inside_sphere & inside_torus
-
-    # return area
     area = box_2d_area(box) * count / n
 
-    # find centroid of area
-    centroid_pos, centroid_neg = find_centroid(pts[pts_in])
-    # find x for centroid
+    centroid_pos, _ = find_centroid(pts[pts_in])
     x_centroid = centroid_pos[0]
 
-    # rotate area around centroid to get volume
     volume = area * 2 * np.pi * x_centroid
 
     return volume, (pts, pts_in)
@@ -153,10 +160,12 @@ def monte_carlo_3d(
 ) -> tuple[float, tuple[np.ndarray, np.ndarray]]:
     """
     Estimates volume of intersection between sphere (radius k) and torus (R, r).
+    Returns estimated volume and the sampled points with in-mask.
     """
     box = box_standard(r, R, origin=origin)  # or box_sample(r, R)
     if deterministic:
-        pts = deterministic_sequence(np.mean(box, axis=1), n)
+        box = np.array(box, dtype=np.float64)
+        pts = deterministic_sequence(np.random.uniform(0, 1, 3), box)
     else:
         pts = samples(box, n)  # deterministic_sequence(box, n)
 
@@ -185,6 +194,7 @@ def mixed_sampling(
 
     With probability `p`, samples are drawn from a standard box centered at (0, 0, 0),
     and with probability (1 - p), from a smaller box centered at a shifted `origin`.
+    Returns the estimated volume and the sampled points with in-mask for both sampling methods.
     """
     if origin is None:
         origin = [0.0, 0.0, 0.0]
@@ -216,11 +226,11 @@ def mixed_sampling(
     return result, ((pts1, mask1), (pts2, mask2))
 
 
-def surface_to_volume(R: float, surface_area: float) -> float:
+def surface_to_volume(d: float, surface_area: float) -> float:
     """
     Converts surface area to volume
     """
-    volume = surface_area * 2 * np.pi * R * surface_area
+    volume = surface_area * 2 * np.pi * d * surface_area
 
     return volume
 
@@ -228,15 +238,18 @@ def surface_to_volume(R: float, surface_area: float) -> float:
 def generate_dataframe(
     k: float, r: float, R: float, n: int = 100_000
 ) -> tuple[pd.Series, pd.Series]:
-    # 1. Run monte_carlo_2d
-    # 2. Run monte_carlo_3d
-    # 3. Run mixed_sampling
-    # 4. Run deterministic_sequence
+    """
+    Generates a dataframe with the results of multiple executions of different Monte Carlo methods.
+    """
 
     results = []
+    # 1. Run monte_carlo_2d
     results.append(pd.DataFrame(run_multi_executions(monte_carlo_2d, n, k, r, R)))
+    # 2. Run monte_carlo_3d
     results.append(pd.DataFrame(run_multi_executions(monte_carlo_3d, n, k, r, R)))
+    # 3. Run mixed_sampling
     results.append(pd.DataFrame(run_multi_executions(mixed_sampling, n, k, r, R)))
+    # 4. Run deterministic_sequence
     results.append(
         pd.DataFrame(
             run_multi_executions(monte_carlo_3d, n, k, r, R, deterministic=True)
@@ -249,7 +262,10 @@ def generate_dataframe(
     return means, stds
 
 
-def generate_table(means: pd.DataFrame, std: pd.DataFrame, names_methods: list[str]):
+def generate_table(means: pd.Series, std: pd.Series, names_methods: list[str]):
+    """
+    Generates a LaTeX table with the results of the Monte Carlo methods.
+    """
 
     table = pd.DataFrame(
         {
@@ -274,17 +290,27 @@ def find_centroid(in_pts: np.ndarray) -> np.ndarray:
     return [[centroid_x_plus, centroid_y], [centroid_x_minus, centroid_y]]
 
 
-def deterministic_sequence(points: np.ndarray, n: int = 100_000) -> np.ndarray:
+@njit
+def deterministic_sequence(
+    points: np.ndarray, box: list[list], n: int = 100_000
+) -> np.ndarray:
+    """
+    Generates a deterministic sequence of n points in 3D using the logistic map.
+    """
+
     x = np.empty(n)
     y = np.empty(n)
     z = np.empty(n)
 
-    x[0], y[0], z[0] = points[:3]
+    x[0], y[0], z[0] = points[0], points[1], points[2]
     for i in range(1, n):
         x[i] = 3.8 * x[i - 1] * (1 - x[i - 1])
         y[i] = 3.8 * y[i - 1] * (1 - y[i - 1])
         z[i] = 3.8 * z[i - 1] * (1 - z[i - 1])
 
+    x = x * (box[0][1] - box[0][0]) + box[0][0]
+    y = y * (box[1][1] - box[1][0]) + box[1][0]
+    z = z * (box[2][1] - box[2][0]) + box[2][0]
     return np.stack((x, y, z), axis=1)
 
 
@@ -596,7 +622,7 @@ def run_multi_executions(
     runs: number of runs to execute
     """
     results = np.empty(runs)
-    for i in tqdm(range(runs), desc="Running simulations"):
+    for i in tqdm(range(runs), desc=f"Running simulations number", total=runs):
         if deterministic:
             result, _ = sim(k, r, R, n, deterministic=True)
         else:
@@ -836,6 +862,9 @@ def plot_mix_2d(
 def plot_volume_histogram(
     list_of_volumes: list[list[float]], case_labels: list[str], save_path: str
 ):
+    """
+    Plots histograms of volume estimates with Gaussian fits for multiple cases.
+    """
     fig, axs = plt.subplots(
         int(len(list_of_volumes) / 2),
         2,
@@ -902,7 +931,7 @@ def plot_volume_histogram(
 
 if __name__ == "__main__":
     # Parameters
-    seed_deterministic = np.random.rand(3)
+
     k = 1.0  # sphere radius
     r_a = 0.4  # torus minor radius
     R_a = 0.75  # torus major radius
@@ -1042,6 +1071,9 @@ if __name__ == "__main__":
     )
 
     # --- Generate results table ---
-    # names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
-    # means, std = generate_dataframe(k, r, R, n=1_000)
-    # generate_table(means, std, names_methods)
+    names_methods = ["Mixed Sampling", "2D MC", "3D MC", "Deterministic Sequence"]
+    means, std = generate_dataframe(k, r_a, R_a, n=100)
+    generate_table(means, std, names_methods)
+    count_monte_det, (pts_monte_det, pts_in_monte_det) = monte_carlo_3d(
+        k, r_a, R_a, deterministic=True
+    )
