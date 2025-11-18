@@ -46,7 +46,9 @@ class SecurityLane:
         yield self.env.timeout(service_time)
 
 
-def passenger(env: simpy.Environment, name: str, security_lane: SecurityLane):
+def passenger(
+    env: simpy.Environment, name: str, security_lane: SecurityLane, waiting_times: list
+):
     """A single passsenger passing through the security lane-"""
 
     # set timer for arrival
@@ -56,9 +58,9 @@ def passenger(env: simpy.Environment, name: str, security_lane: SecurityLane):
         yield request
         yield env.process(security_lane.service_passenger())
         # set timer for leaving and calculate wait time
-        # TODO: we need to collect these wait times here for analysis later
         leave_time = env.now
         wait_time = leave_time - arrival_time
+        waiting_times.append(wait_time)
         print(f"{name} waited for {wait_time:.2f} minutes")
 
 
@@ -73,14 +75,19 @@ def setup(
     init_passengers = 5
 
     for _ in range(init_passengers):
-        env.process(passenger(env, f"Passenger {next(passenger_count)}", security_lane))
-
+        env.process(
+            passenger(
+                env, f"Passenger {next(passenger_count)}", security_lane, waiting_times
+            )
+        )
     # add more passengers while running
     # TODO: this needs to have a stopping condition, i.e. number of total passengers
     while True:
         yield env.timeout(1 / arrival_rate)
         passenger_id = next(passenger_count)
-        env.process(passenger(env, f"Passenger {passenger_id}", security_lane))
+        env.process(
+            passenger(env, f"Passenger {passenger_id}", security_lane, waiting_times)
+        )
 
 
 if __name__ == "__main__":
