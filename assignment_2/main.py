@@ -41,7 +41,7 @@ def get_arrival_rate(df: pd.DataFrame, month: str, lanes: int = 50) -> float:
 
 class SecurityLane:
 
-    def __init__(self, env: simpy.Environment, num_servers: int, service_rate: float):
+    def __init__(self, env: simpy.Environment, num_servers: int):
         self.env = env
         self.server = simpy.Resource(env, num_servers)
         self.service_time_mean = 1.0
@@ -71,13 +71,11 @@ def passenger(env: simpy.Environment, name: str, security_lane: SecurityLane):
         print(f"{name} waited for {wait_time:.2f} minutes")
 
 
-def setup(
-    env: simpy.Environment, num_machines: int, service_rate: float, arrival_rate: float
-):
+def setup(env: simpy.Environment, num_machines: int, arrival_rate: float):
     """Setting up the security lane simulation"""
 
     # create security lane
-    security_lane = SecurityLane(env, num_machines, service_rate)
+    security_lane = SecurityLane(env, num_machines)
     passenger_count = itertools.count()
     init_passengers = 5
 
@@ -99,7 +97,5 @@ if __name__ == "__main__":
 
     print("------SECURITY LANE SIMULATION------")
     env = simpy.Environment()
-    env.process(
-        setup(env, num_machines=1, service_rate=1 / 3, arrival_rate=arrival_rate)
-    )
+    env.process(setup(env, num_machines=1, arrival_rate=arrival_rate))
     env.run(until=10)
