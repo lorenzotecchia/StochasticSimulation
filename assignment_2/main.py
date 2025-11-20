@@ -1,8 +1,9 @@
-import os
-import simpy
 import itertools
-import pandas as pd
+import os
+
 import numpy as np
+import pandas as pd
+import simpy
 
 
 def load_data(file_path) -> pd.DataFrame:
