@@ -74,7 +74,9 @@ def passenger(
         print(f"{name} waited for {wait_time:.2f} minutes")
 
 
-def setup(env: simpy.Environment, num_machines: int, arrival_rate: float):
+def setup(
+    env: simpy.Environment, num_machines: int, arrival_rate: float, waiting_times: list
+):
     """Setting up the security lane simulation"""
 
     # create security lane
@@ -104,6 +106,12 @@ if __name__ == "__main__":
     arrival_rate = get_arrival_rate(df, "September")
 
     print("------SECURITY LANE SIMULATION------")
+    waiting_times = []
     env = simpy.Environment()
-    env.process(setup(env, num_machines=1, arrival_rate=arrival_rate))
+    env.process(
+        setup(
+            env, num_machines=1, arrival_rate=arrival_rate, waiting_times=waiting_times
+        )
+    )
     env.run(until=10)
+    print(waiting_times)
