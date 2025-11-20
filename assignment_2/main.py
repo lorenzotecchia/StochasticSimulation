@@ -1,10 +1,16 @@
+import os
 import simpy
 import itertools
 import pandas as pd
+import numpy as np
 
 
 def load_data(file_path) -> pd.DataFrame:
     """Load data from a given file path."""
+
+    # get relative path
+    file_path = os.path.join(os.path.dirname(__file__), file_path)
+
     data = pd.read_csv(file_path)
     data = data.drop(
         columns=["Europe Flights", "Intercontinental Flights", "Total Flights"]
@@ -38,11 +44,14 @@ class SecurityLane:
     def __init__(self, env: simpy.Environment, num_servers: int, service_rate: float):
         self.env = env
         self.server = simpy.Resource(env, num_servers)
-        # TODO: service time currently is determinstic - this needs to be changed to a random variable
-        self.service_rate = service_rate  # per minute
+        self.service_time_mean = 1.0
+        self.service_time_standard_dev = 0.25
 
     def service_passenger(self):
-        service_time = 1 / self.service_rate
+        # draw from normal distribution
+        service_time = np.random.normal(
+            loc=self.service_time_mean, scale=self.service_time_standard_dev
+        )
         yield self.env.timeout(service_time)
 
 
@@ -85,7 +94,7 @@ def setup(
 
 if __name__ == "__main__":
 
-    df = load_data("./assignment_2/airport.csv")
+    df = load_data("airport.csv")
     arrival_rate = get_arrival_rate(df, "September")
 
     print("------SECURITY LANE SIMULATION------")
