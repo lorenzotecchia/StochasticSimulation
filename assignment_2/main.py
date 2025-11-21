@@ -75,19 +75,22 @@ def passenger(
     """A single passsenger passing through the security lane-"""
 
     # set timer for arrival
-    arrival_time = env.now
-    if verbose:
-        print(f"{name} arrives at {arrival_time:.2f}")
 
     with security_lane.server.request() as request:
+        arrival_time = env.now
+        if verbose:
+            print(f"{name} arrives at {arrival_time:.2f}")
         yield request
+        queue_time = env.now
+        # service starts
         yield env.process(security_lane.service_passenger())
         # set timer for leaving and calculate wait time
         leave_time = env.now
-        wait_time = leave_time - arrival_time
-        waiting_times.append(wait_time)
+        total_wait_time = leave_time - arrival_time
+        wait_queue_time = queue_time - arrival_time
+        waiting_times.append(wait_queue_time)
         if verbose:
-            print(f"{name} waited for {wait_time:.2f} minutes")
+            print(f"{name} waited for {wait_queue_time:.2f} minutes")
 
 
 def setup(
@@ -116,8 +119,9 @@ def setup(
             )
         )
     # add more passengers while running
-    while len(waiting_times) < (passengers_passed - 1):
-        yield env.timeout(1 / arrival_rate)
+    passed = 0
+    while passed < passengers_passed:
+        yield env.timeout(np.random.exponential(1 / arrival_rate))
         passenger_id = next(passenger_count)
         env.process(
             passenger(
@@ -128,6 +132,7 @@ def setup(
                 verbose=verbose,
             )
         )
+        passed += 1
 
 
 def run_simulation(
@@ -142,11 +147,11 @@ def run_simulation(
             num_machines=1,
             arrival_rate=arrival_rate,
             waiting_times=waiting_times,
-            verbose=False,
+            verbose=verbose,
             passengers_passed=passengers_passed,
         )
     )
-    env.run(until=5000)
+    env.run()
     return waiting_times
 
 
@@ -164,7 +169,7 @@ if __name__ == "__main__":
 
         for i in tqdm(range(R)):
             waiting_times = run_simulation(
-                arrival_rate, passengers_passed=3000, verbose=False
+                arrival_rate, passengers_passed=3000, verbose=True
             )
             waiting_times_collector.append(waiting_times)
 
