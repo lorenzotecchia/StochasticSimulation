@@ -5,6 +5,7 @@ import pandas as pd
 import simpy
 from tqdm import tqdm
 from scipy import stats
+import matplotlib.pyplot as plt
 
 
 def load_data(file_path) -> pd.DataFrame:
@@ -49,19 +50,31 @@ class SecurityLane:
         num_servers: int,
         st_mean: float = 1.0,
         st_std: float = 0.25,
+        n_customers=3000,
     ):
         self.env = env
         self.server = simpy.Resource(env, num_servers)
         self.service_time_mean = st_mean
         self.service_time_standard_dev = st_std
+        self.n_customers = n_customers
+
+        self.service_times = stats.truncnorm.rvs(
+            -self.service_time_mean / self.service_time_standard_dev,
+            np.inf,
+            loc=self.service_time_mean,
+            scale=self.service_time_standard_dev,
+            size=self.n_customers,
+        )
+
+        self.current_index = 0
 
     def service_passenger(self):
         # draw from normal distribution
-        service_time = np.random.normal(
-            loc=self.service_time_mean, scale=self.service_time_standard_dev
-        )
         # ensure non-negative service time
-        service_time = max(0, service_time)
+
+        service_time = self.service_times[self.current_index]
+        self.current_index += 1
+
         yield self.env.timeout(service_time)
 
 
@@ -95,16 +108,17 @@ def passenger(
 
 def setup(
     env: simpy.Environment,
-    num_machines: int,
+    num_servers: int,
     arrival_rate: float,
     waiting_times: list,
     verbose: bool = False,
-    passengers_passed: int = 1000,
+    st_std: float = 0.25,
+    passengers_passed: int = 3000,
 ):
     """Setting up the security lane simulation"""
 
     # create security lane
-    security_lane = SecurityLane(env, num_machines)
+    security_lane = SecurityLane(env, num_servers, st_std=st_std)
     passenger_count = itertools.count()
     init_passengers = 0
 
@@ -118,6 +132,7 @@ def setup(
                 verbose=verbose,
             )
         )
+
     # add more passengers while running
     passed = 0
     while passed < passengers_passed:
@@ -136,7 +151,11 @@ def setup(
 
 
 def run_simulation(
-    arrival_rate: float, verbose: bool = False, passengers_passed: int = 1000
+    arrival_rate: float,
+    st_std: float = 0.25,
+    verbose: bool = False,
+    passengers_passed: int = 3000,
+    num_servers: int = 1,
 ) -> list[float]:
     """Runs a single simulation"""
     waiting_times = []
@@ -144,39 +163,217 @@ def run_simulation(
     env.process(
         setup(
             env,
-            num_machines=1,
+            num_servers=num_servers,
             arrival_rate=arrival_rate,
             waiting_times=waiting_times,
             verbose=verbose,
             passengers_passed=passengers_passed,
+            st_std=st_std,
         )
     )
     env.run()
     return waiting_times
 
 
+def run_multiple_simulations(
+    arrival_rate: float,
+    st_std: float = 0.25,
+    verbose: bool = False,
+    passengers_passed: int = 3000,
+    num_servers: int = 1,
+    num_replications=40,
+    warm_up: int = 0,
+):
+    waiting_times_collector: list = []
+
+    for i in tqdm(range(num_replications)):
+        waiting_times = run_simulation(
+            arrival_rate,
+            st_std=st_std,
+            passengers_passed=passengers_passed,
+            verbose=verbose,
+            num_servers=num_servers,
+        )
+        waiting_times_collector.append(waiting_times)
+    waiting_times_collector = np.array(waiting_times_collector)
+
+    # get average and std
+    passengers_passed = [len(w) for w in waiting_times_collector]
+    mean_waiting_time = np.mean(
+        [np.mean(ws) for ws in waiting_times_collector[:, warm_up:]]
+    )
+    std_waiting_time = np.std(
+        [np.mean(ws) for ws in waiting_times_collector[:, warm_up:]], ddof=1
+    )
+
+    return (
+        passengers_passed,
+        mean_waiting_time,
+        std_waiting_time,
+        waiting_times_collector,
+    )
+
+
+def check_validity(
+    average: float, std: float, length: int, theoretical_value: float, t_value: float
+):
+
+    t_stat = (average - theoretical_value) / (std / np.sqrt(length))
+    return t_stat < t_value
+
+
+def plot_waiting_times_cumavg(
+    waiting_times_collector: list,
+    reps_to_plot: int,
+    warm_up: int = 0,
+    save_path: str = "",
+    show: bool = False,
+):
+    for r in range(reps_to_plot):
+        cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
+            1, len(waiting_times_collector[r]) + 1
+        )
+        plt.plot(cumavg, alpha=0.5)
+
+    avg_per_customer = np.mean(waiting_times_collector, axis=0)
+    cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
+        1, len(avg_per_customer) + 1
+    )
+    plt.plot(
+        cumavg_per_customer, color="black", label="ensemble-averaged cumulative mean"
+    )
+    if warm_up:
+        plt.axvline(x=warm_up, color="red", label="warm up", ls="--")
+
+    plt.xlabel("customer index")
+    plt.ylabel("cumulative average waiting time")
+    plt.grid(alpha=0.5)
+    plt.tight_layout()
+    plt.legend()
+
+    if show:
+        plt.show()
+
+    # save if path is there
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
 if __name__ == "__main__":
 
     df = load_data("airport.csv")
-    arrival_rate = get_arrival_rate(df, "September")
     Q2A = True
+    Q2B = True
 
     if Q2A:
+        utilization = 0.85
+        service_time_mean = 1
+        service_time_std = 0.25
+        arrival_rate = utilization / service_time_mean
 
-        arrival_rate = 0.85
+        # TODO we can decide a better warm-up period,
+        # since discarding 1000 customers sometimes leads to rejection of H0 :c
+        warm_up = 500
+
+        # theoretical waiting time:
+        theoretical_wt = (
+            arrival_rate * (service_time_std**2 + service_time_mean**2)
+        ) / (2 * (1 - utilization))
+
+        # R replications
         R = 40
-        waiting_times_collector = []
+        (
+            passengers_passed,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+        ) = run_multiple_simulations(
+            arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
+        )
 
-        for i in tqdm(range(R)):
-            waiting_times = run_simulation(
-                arrival_rate, passengers_passed=3000, verbose=True
-            )
-            waiting_times_collector.append(waiting_times)
+        # hypothesis test
+        t_value = 2.021
+        validity = check_validity(
+            mean_waiting_time,
+            std_waiting_time,
+            len(waiting_times_collector),
+            theoretical_wt,
+            t_value,
+        )
 
         print("------SECURITY LANE SIMULATION------")
         print("------------Q2A  RESULTS------------")
 
-        passengers_passed = [len(w) for w in waiting_times_collector]
-        mean_waiting_time = np.mean([np.mean(ws) for ws in waiting_times_collector])
         print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-        print(f"Mean waiting time: {mean_waiting_time:.2f} minutes")
+        print(
+            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
+            f"Standard deviation of waiting time: {std_waiting_time} minutes",
+        )
+        print(f"theoretical steady-state solution: {theoretical_wt}")
+        print(f"Not reject H0: {validity}")
+
+        plot_waiting_times_cumavg(
+            waiting_times_collector, 20, warm_up, save_path="img/cumavg_2A.png"
+        )
+
+    if Q2B:
+        arrival_rate = get_arrival_rate(df, "September")
+        R = 40
+
+        # CURRENT OPERATIONS
+        # R replications
+
+        R = 40
+        (
+            passengers_passed,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+        ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
+
+        print("------SECURITY LANE SIMULATION------")
+        print("------------Q2B  RESULTS------------")
+        print("---------CURRENT OPERATIONS---------")
+
+        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
+        print(
+            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
+            f"Standard deviation of waiting time: {std_waiting_time} minutes",
+        )
+
+        # ADD MORE SERVERS
+        print("-------------2  SERVERS-------------")
+
+        (
+            passengers_passed,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+        ) = run_multiple_simulations(
+            arrival_rate=arrival_rate, num_replications=R, num_servers=2
+        )
+
+        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
+        print(
+            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
+            f"Standard deviation of waiting time: {std_waiting_time} minutes",
+        )
+
+        #  REDUCE VARIANCE
+        print("--------REDUCED  VARIABILITY--------")
+
+        (
+            passengers_passed,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+        ) = run_multiple_simulations(
+            arrival_rate=arrival_rate, st_std=0.01, num_replications=R
+        )
+
+        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
+        print(
+            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
+            f"Standard deviation of waiting time: {std_waiting_time} minutes",
+        )
