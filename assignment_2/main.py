@@ -195,16 +195,17 @@ def run_multiple_simulations(
             num_servers=num_servers,
         )
         waiting_times_collector.append(waiting_times)
+
     waiting_times_collector = np.array(waiting_times_collector)
 
-    # get average and std
+    # passengesers passed per replication
     passengers_passed = [len(w) for w in waiting_times_collector]
-    mean_waiting_time = np.mean(
-        [np.mean(ws) for ws in waiting_times_collector[:, warm_up:]]
-    )
-    std_waiting_time = np.std(
-        [np.mean(ws) for ws in waiting_times_collector[:, warm_up:]], ddof=1
-    )
+
+    # discard warm-up period
+    waiting_times_collector = waiting_times_collector[:, warm_up:]
+    mean_waiting_time = np.mean([np.mean(ws) for ws in waiting_times_collector])
+    # use bessels correction for std dev (ddof=1)
+    std_waiting_time = np.std([np.mean(ws) for ws in waiting_times_collector], ddof=1)
 
     return (
         passengers_passed,
@@ -264,7 +265,9 @@ if __name__ == "__main__":
 
     df = load_data("airport.csv")
     Q2A = True
-    Q2B = True
+    WARM_UP_SWEEP = False
+    PLOT_WARM_UP_SWEEP = False
+    Q2B = False
 
     if Q2A:
         utilization = 0.85
@@ -313,9 +316,75 @@ if __name__ == "__main__":
         print(f"theoretical steady-state solution: {theoretical_wt}")
         print(f"Not reject H0: {validity}")
 
-        plot_waiting_times_cumavg(
+        """  plot_waiting_times_cumavg(
             waiting_times_collector, 20, warm_up, save_path="img/cumavg_2A.png"
+        ) """
+
+    if WARM_UP_SWEEP:
+        utilization = 0.85
+        service_time_mean = 1
+        service_time_std = 0.25
+        arrival_rate = utilization / service_time_mean
+
+        warm_ups = range(0, 1001, 10)
+        R = 1000
+
+        stats_collector = []
+        for warm_up in warm_ups:
+            print(f"Running warm-up period: {warm_up}")
+            _, mean, std, _ = run_multiple_simulations(
+                arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
+            )
+
+            stats_collector.append((warm_up, mean, std))
+
+        stats_collector = np.array(stats_collector)
+        np.save("assignment_2/data/warm_up_sweep.npy", stats_collector)
+
+    if PLOT_WARM_UP_SWEEP:
+
+        stats_collector = np.load("assignment_2/data/warm_up_sweep.npy")
+        warm_ups = stats_collector[:, 0]
+        means = stats_collector[:, 1]
+        stds = stats_collector[:, 2]
+
+        utilization = 0.85
+        service_time_mean = 1
+        service_time_std = 0.25
+        arrival_rate = utilization / service_time_mean
+
+        theoretical_wt = (
+            arrival_rate * (service_time_std**2 + service_time_mean**2)
+        ) / (2 * (1 - utilization))
+
+        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
+        axs.plot(warm_ups, means, label=r"$\bar{X}$", lw=1.5)
+        axs.fill_between(
+            warm_ups,
+            means - stds,
+            means + stds,
+            alpha=0.2,
+            label=r"$s$",
         )
+        axs.hlines(
+            theoretical_wt,
+            xmin=warm_ups[0],
+            xmax=warm_ups[-1],
+            colors="red",
+            linestyles="--",
+            label=r"$\mu$",
+            lw=1,
+        )
+
+        # true value
+        axs.set_xlabel("Warm-up period (customers)")
+        axs.set_ylabel("Mean waiting time (minutes)")
+        axs.grid(alpha=0.5)
+        axs.set_title("Effect of warm-up period on waiting time estimates (R = 1000)")
+        axs.legend()
+        plt.tight_layout()
+        plt.savefig("assignment_2/img/warm_up_sweep.png", dpi=300)
+        plt.show()
 
     if Q2B:
         arrival_rate = get_arrival_rate(df, "September")
