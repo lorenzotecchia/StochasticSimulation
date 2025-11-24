@@ -369,7 +369,7 @@ if __name__ == "__main__":
             std_waiting_time,
             waiting_times_collector,
         ) = run_multiple_simulations(
-            arrival_rate=arrival_rate, st_std=0.01, num_replications=R
+            arrival_rate=arrival_rate, st_std=2, num_replications=R
         )
 
         print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
