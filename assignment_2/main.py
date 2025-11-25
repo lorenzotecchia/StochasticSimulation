@@ -1,11 +1,12 @@
 import itertools
 import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import simpy
-from tqdm import tqdm
 from scipy import stats
-import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 def load_data(file_path) -> pd.DataFrame:
@@ -81,6 +82,7 @@ class SecurityLane:
 def passenger(
     env: simpy.Environment,
     name: str,
+    queue_lengths,
     security_lane: SecurityLane,
     waiting_times: list,
     verbose: bool = False,
@@ -90,6 +92,7 @@ def passenger(
     # set timer for arrival
 
     with security_lane.server.request() as request:
+        queue_len = len(security_lane.server.queue)
         arrival_time = env.now
         if verbose:
             print(f"{name} arrives at {arrival_time:.2f}")
@@ -102,6 +105,7 @@ def passenger(
         total_wait_time = leave_time - arrival_time
         wait_queue_time = queue_time - arrival_time
         waiting_times.append(wait_queue_time)
+        queue_lengths.append((env.now, queue_len))
         if verbose:
             print(f"{name} waited for {wait_queue_time:.2f} minutes")
 
@@ -111,6 +115,7 @@ def setup(
     num_servers: int,
     arrival_rate: float,
     waiting_times: list,
+    queue_lengths: list,
     verbose: bool = False,
     st_std: float = 0.25,
     passengers_passed: int = 3000,
@@ -127,6 +132,7 @@ def setup(
             passenger(
                 env,
                 f"Passenger {next(passenger_count)}",
+                queue_lengths,
                 security_lane,
                 waiting_times,
                 verbose=verbose,
@@ -142,6 +148,7 @@ def setup(
             passenger(
                 env,
                 f"Passenger {passenger_id}",
+                queue_lengths,
                 security_lane,
                 waiting_times,
                 verbose=verbose,
@@ -156,15 +163,17 @@ def run_simulation(
     verbose: bool = False,
     passengers_passed: int = 3000,
     num_servers: int = 1,
-) -> list[float]:
+):
     """Runs a single simulation"""
     waiting_times = []
+    queue_lengths = []
     env = simpy.Environment()
     env.process(
         setup(
             env,
             num_servers=num_servers,
             arrival_rate=arrival_rate,
+            queue_lengths=queue_lengths,
             waiting_times=waiting_times,
             verbose=verbose,
             passengers_passed=passengers_passed,
@@ -172,7 +181,7 @@ def run_simulation(
         )
     )
     env.run()
-    return waiting_times
+    return waiting_times, queue_lengths
 
 
 def run_multiple_simulations(
@@ -184,40 +193,42 @@ def run_multiple_simulations(
     num_replications=40,
     warm_up: int = 0,
 ):
-    waiting_times_collector: list = []
+    waiting_times_collector = []
+    queue_length_collector = []
 
-    for i in tqdm(range(num_replications)):
-        waiting_times = run_simulation(
+    for _ in tqdm(range(num_replications)):
+        wt, ql = run_simulation(
             arrival_rate,
             st_std=st_std,
             passengers_passed=passengers_passed,
             verbose=verbose,
             num_servers=num_servers,
         )
-        waiting_times_collector.append(waiting_times)
+        waiting_times_collector.append(wt)
+        queue_length_collector.append(ql)
 
-    waiting_times_collector = np.array(waiting_times_collector)
+    waiting_times_collector = np.array(waiting_times_collector, dtype=object)
+    queue_length_collector = np.array(queue_length_collector, dtype=object)
 
-    # passengesers passed per replication
     passengers_passed = [len(w) for w in waiting_times_collector]
 
-    # discard warm-up period
-    waiting_times_collector = waiting_times_collector[:, warm_up:]
-    mean_waiting_time = np.mean([np.mean(ws) for ws in waiting_times_collector])
-    # use bessels correction for std dev (ddof=1)
-    std_waiting_time = np.std([np.mean(ws) for ws in waiting_times_collector], ddof=1)
+    # apply warm-up
+    trimmed = [ws[warm_up:] for ws in waiting_times_collector]
+    mean_waiting_time = np.mean([np.mean(ws) for ws in trimmed])
+    std_waiting_time = np.std([np.mean(ws) for ws in trimmed], ddof=1)
 
     return (
         passengers_passed,
         mean_waiting_time,
         std_waiting_time,
         waiting_times_collector,
+        queue_length_collector,
     )
 
 
 def check_validity(
     average: float, std: float, length: int, theoretical_value: float, t_value: float
-):
+) -> bool:
 
     t_stat = (average - theoretical_value) / (std / np.sqrt(length))
     return t_stat < t_value
@@ -261,13 +272,131 @@ def plot_waiting_times_cumavg(
     plt.close()
 
 
+def std_sweep(arrival_rate, std_values, R=40, passengers_passed=3000):
+    means = []
+    stds = []
+
+    for st in std_values:
+        print(f"Running sweep for σ = {st}")
+        _, mean, sdev, _, _ = run_multiple_simulations(
+            arrival_rate=arrival_rate,
+            st_std=st,
+            num_replications=R,
+            passengers_passed=passengers_passed,
+        )
+        means.append(mean)
+        stds.append(sdev)
+
+    plt.figure(figsize=(8, 5), dpi=300)
+    plt.plot(std_values, means, marker="o", label="Mean waiting time")
+    plt.fill_between(
+        std_values,
+        np.array(means) - np.array(stds),
+        np.array(means) + np.array(stds),
+        alpha=0.2,
+        label="±1 std dev",
+    )
+    plt.xlabel("Service time standard deviation σ")
+    plt.ylabel("Waiting time (minutes)")
+    plt.title("Effect of σ on Waiting Times (Part 2B)")
+    plt.grid(alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("std_sweep.png")
+    plt.show()
+
+
+def plot_average_waiting_times(per_sim_means, scenario_name="Scenario"):
+    plt.figure(figsize=(8, 5), dpi=300)
+    plt.hist(per_sim_means, bins=15, alpha=0.6, density=True, label="Simulation means")
+
+    # Fit normal PDF
+    mu = np.mean(per_sim_means)
+    sigma = np.std(per_sim_means, ddof=1)
+    x = np.linspace(min(per_sim_means), max(per_sim_means), 200)
+    pdf = stats.norm.pdf(x, mu, sigma)
+    plt.plot(x, pdf, label=f"Normal fit (μ={mu:.2f}, σ={sigma:.2f})", linewidth=2)
+
+    plt.xlabel("Average waiting time per simulation (minutes)")
+    plt.ylabel("Density")
+    plt.title(f"Distribution of per-simulation mean waiting times\n{scenario_name}")
+    plt.grid(alpha=0.4)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_queue_length_mean(queue_lengths_collector, scenario_name="Scenario"):
+    # Interpolate all trajectories to a common time grid
+    max_time = max(ql[-1][0] for ql in queue_lengths_collector)
+    common_times = np.linspace(0, max_time, 500)
+
+    interpolated = []
+    for ql in queue_lengths_collector:
+        times = np.array([t for t, q in ql])
+        lengths = np.array([q for t, q in ql])
+        interpolated.append(np.interp(common_times, times, lengths))
+
+    interpolated = np.array(interpolated)
+    mean_curve = np.mean(interpolated, axis=0)
+    std_curve = np.std(interpolated, axis=0)
+
+    plt.figure(figsize=(10, 5), dpi=300)
+    plt.plot(common_times, mean_curve, label="Mean queue length", linewidth=2)
+    plt.fill_between(
+        common_times,
+        mean_curve - std_curve,
+        mean_curve + std_curve,
+        alpha=0.3,
+        label="± 1 std dev",
+    )
+
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Mean Queue Length")
+    plt.title(f"Mean Queue Length Across Replications — {scenario_name}")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_queue_length_single(queue_lengths, scenario_name="Scenario 1"):
+    times = [t for t, q in queue_lengths]
+    lengths = [q for t, q in queue_lengths]
+
+    plt.figure(figsize=(10, 5), dpi=300)
+    plt.plot(times, lengths, linewidth=1.3)
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Queue Length")
+    plt.title(f"Queue Length Over Time — {scenario_name}")
+    plt.grid(alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_queue_lengths_all(queue_lengths_collector, scenario_name="Scenario"):
+    plt.figure(figsize=(10, 5), dpi=300)
+
+    for i, ql in enumerate(queue_lengths_collector):
+        times = [t for t, q in ql]
+        lengths = [q for t, q in ql]
+        plt.plot(times, lengths, alpha=0.25, linewidth=0.8)
+
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Queue Length")
+    plt.title(f"Queue Length Trajectories Across Replications — {scenario_name}")
+    plt.grid(alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+
 if __name__ == "__main__":
 
     df = load_data("airport.csv")
-    Q2A = True
+    Q2A = False
     WARM_UP_SWEEP = False
     PLOT_WARM_UP_SWEEP = False
-    Q2B = False
+    Q2B = True
 
     if Q2A:
         utilization = 0.85
@@ -291,6 +420,7 @@ if __name__ == "__main__":
             mean_waiting_time,
             std_waiting_time,
             waiting_times_collector,
+            queue_lengths_collector,
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
         )
@@ -332,7 +462,7 @@ if __name__ == "__main__":
         stats_collector = []
         for warm_up in warm_ups:
             print(f"Running warm-up period: {warm_up}")
-            _, mean, std, _ = run_multiple_simulations(
+            _, mean, std, _, _ = run_multiple_simulations(
                 arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
             )
 
@@ -388,6 +518,13 @@ if __name__ == "__main__":
 
     if Q2B:
         arrival_rate = get_arrival_rate(df, "September")
+
+        print(arrival_rate)
+
+        # 1. Standard deviation sweep
+        std_values = np.linspace(0.05, 1.0, 20)
+        std_sweep(arrival_rate, std_values)
+
         R = 40
 
         # CURRENT OPERATIONS
@@ -399,7 +536,19 @@ if __name__ == "__main__":
             mean_waiting_time,
             std_waiting_time,
             waiting_times_collector,
+            queue_lengths_collector,
         ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
+
+        per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
+        per_sim_length = np.array([np.mean(lgt) for lgt in queue_lengths_collector])
+
+        # 2. Waiting time distribution for baseline run
+        plot_average_waiting_times(per_sim_means, scenario_name="Baseline")
+
+        # 3. Queue length plot
+        plot_queue_length_single(queue_lengths_collector[0])
+        plot_queue_lengths_all(queue_lengths_collector, "Baseline")
+        plot_queue_length_mean(queue_lengths_collector, "Baseline")
 
         print("------SECURITY LANE SIMULATION------")
         print("------------Q2B  RESULTS------------")
@@ -419,6 +568,7 @@ if __name__ == "__main__":
             mean_waiting_time,
             std_waiting_time,
             waiting_times_collector,
+            queue_lengths_collector,
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate, num_replications=R, num_servers=2
         )
@@ -437,6 +587,7 @@ if __name__ == "__main__":
             mean_waiting_time,
             std_waiting_time,
             waiting_times_collector,
+            queue_lengths_collector,
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate, st_std=2, num_replications=R
         )
