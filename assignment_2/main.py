@@ -119,14 +119,17 @@ def setup(
     verbose: bool = False,
     st_std: float = 0.25,
     passengers_passed: int = 3000,
+    init_passengers: int = 0,
 ):
     """Setting up the security lane simulation"""
 
     # create security lane
-    security_lane = SecurityLane(env, num_servers, st_std=st_std)
-    passenger_count = itertools.count()
-    init_passengers = 0
+    security_lane = SecurityLane(
+        env, num_servers, st_std=st_std, n_customers=passengers_passed
+    )
 
+    # add passengers that are already in the queue
+    passenger_count = itertools.count()
     for _ in range(init_passengers):
         env.process(
             passenger(
@@ -141,7 +144,7 @@ def setup(
 
     # add more passengers while running
     passed = 0
-    while passed < passengers_passed:
+    while passed < (passengers_passed - init_passengers):
         yield env.timeout(np.random.exponential(1 / arrival_rate))
         passenger_id = next(passenger_count)
         env.process(
@@ -163,6 +166,8 @@ def run_simulation(
     verbose: bool = False,
     passengers_passed: int = 3000,
     num_servers: int = 1,
+    init_passengers: int = 0,
+    stop_time: int = 0,
 ):
     """Runs a single simulation"""
     waiting_times = []
@@ -178,9 +183,13 @@ def run_simulation(
             verbose=verbose,
             passengers_passed=passengers_passed,
             st_std=st_std,
+            init_passengers=init_passengers,
         )
     )
-    env.run()
+    if stop_time:
+        env.run(until=stop_time)
+    else:
+        env.run()
     return waiting_times, queue_lengths
 
 
@@ -192,23 +201,36 @@ def run_multiple_simulations(
     num_servers: int = 1,
     num_replications=40,
     warm_up: int = 0,
+    init_passengers: list = 0,
+    stop_time: int = 0,
 ):
     waiting_times_collector = []
     queue_length_collector = []
 
-    for _ in tqdm(range(num_replications)):
+    for i, _ in tqdm(enumerate(range(num_replications))):
         wt, ql = run_simulation(
             arrival_rate,
             st_std=st_std,
             passengers_passed=passengers_passed,
             verbose=verbose,
             num_servers=num_servers,
+            init_passengers=(
+                init_passengers[i]
+                if isinstance(init_passengers, list)
+                else init_passengers
+            ),
+            stop_time=stop_time,
         )
         waiting_times_collector.append(wt)
         queue_length_collector.append(ql)
 
-    waiting_times_collector = np.array(waiting_times_collector, dtype=object)
-    queue_length_collector = np.array(queue_length_collector, dtype=object)
+    # waiting_times_collector = np.array(waiting_times_collector, dtype=object)
+    # queue_length_collector = np.array(queue_length_collector, dtype=object)
+
+    queue_length_collector = [np.array(ql, dtype=int) for ql in queue_length_collector]
+    waiting_times_collector = [
+        np.array(wt, dtype=float) for wt in waiting_times_collector
+    ]
 
     passengers_passed = [len(w) for w in waiting_times_collector]
 
@@ -394,9 +416,11 @@ if __name__ == "__main__":
 
     df = load_data("airport.csv")
     Q2A = False
+    Q2A = False
     WARM_UP_SWEEP = False
     PLOT_WARM_UP_SWEEP = False
     Q2B = True
+    HOURLY_ARRIVALS = False
 
     if Q2A:
         utilization = 0.85
@@ -597,3 +621,157 @@ if __name__ == "__main__":
             f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
             f"Standard deviation of waiting time: {std_waiting_time} minutes",
         )
+
+    # 4. Varying arrival rates over the day
+    if HOURLY_ARRIVALS:
+        arrival_rates = np.array(
+            [
+                0.5,
+                0.4,
+                0.3,
+                0.2,
+                0.4,
+                0.8,
+                1.2,
+                1.8,
+                2.5,
+                3.1,
+                2.0,
+                1.7,
+                1.1,
+                1.9,
+                2.1,
+                2.8,
+                2.2,
+                3.3,
+                2.5,
+                2.4,
+                2.0,
+                2.1,
+                0.7,
+                0.3,
+            ]
+        )
+        R = 40
+        max_passengers = 1000
+        queue_lengths_collector = [
+            np.zeros((max_passengers, 2), dtype=int) for _ in range(R)
+        ]
+
+        ql_for_plot = []
+        wt_for_plot = []
+        for arrival_rate in tqdm(arrival_rates):
+
+            passing_ql = [ql[-1, 1] for ql in queue_lengths_collector]
+
+            (
+                passengers_passed,
+                mean_waiting_time,
+                std_waiting_time,
+                waiting_times_collector,
+                queue_lengths_collector,
+            ) = run_multiple_simulations(
+                arrival_rate=arrival_rate,
+                num_replications=R,
+                passengers_passed=max_passengers,
+                init_passengers=passing_ql,
+                verbose=False,
+                stop_time=480,
+                num_servers=2,
+            )
+            mean_ql = np.mean([ql[-1, 1] for ql in queue_lengths_collector])
+            ql_for_plot.append(mean_ql)
+            wt_for_plot.append(mean_waiting_time)
+
+        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
+        axs2 = axs.twinx()
+        axs3 = axs.twinx()
+        hours = np.arange(0, 24)
+
+        # plot queue length
+        axs.plot(
+            hours,
+            ql_for_plot,
+            color="darkred",
+            marker="s",
+            label="Mean queue length",
+            lw=1.5,
+            ms=3,
+        )
+        axs.set_xlabel("Hour of the day")
+        axs.set_ylabel("Mean queue length [passengers]", color="darkred")
+        axs.set_zorder(2)
+        axs.patch.set_alpha(0)
+
+        # waiting time
+        axs2.plot(
+            hours,
+            wt_for_plot,
+            color="darkgreen",
+            marker="o",
+            label="Mean waiting time",
+            lw=1.5,
+            ms=3,
+        )
+        axs2.set_ylabel("Mean waiting time [minutes]", color="darkgreen")
+        axs2.set_zorder(2)
+        axs2.patch.set_alpha(0)
+
+        # arrival rate
+        bars = axs3.bar(hours, arrival_rates, width=0.8, alpha=0.6, label=r"$\lambda$")
+        for bar in bars:
+            height = bar.get_height()
+            axs3.text(
+                bar.get_x() + bar.get_width() / 2,  # x-position
+                height + 0.05,  # y-position (middle of bar)
+                f"{height:.1f}",  # text
+                ha="center",
+                va="center",
+                color="darkblue",
+                fontsize=6,
+                alpha=0.6,
+            )
+        axs3.set_zorder(0)
+        axs3.patch.set_visible(False)
+        # Move axis 3 further right so it doesn't overlap axis 2
+        axs3.spines["right"].set_position(("axes", 1.15))
+
+        # Hide axis 3 visually
+        axs3.spines["right"].set_visible(False)
+        axs3.yaxis.set_visible(False)
+
+        axs.set_xticks(hours)
+        axs.set_xticklabels(
+            [
+                "00:00",
+                "01:00",
+                "02:00",
+                "03:00",
+                "04:00",
+                "05:00",
+                "06:00",
+                "07:00",
+                "08:00",
+                "09:00",
+                "10:00",
+                "11:00",
+                "12:00",
+                "13:00",
+                "14:00",
+                "15:00",
+                "16:00",
+                "17:00",
+                "18:00",
+                "19:00",
+                "20:00",
+                "21:00",
+                "22:00",
+                "23:00",
+            ]
+        )
+        axs.tick_params(axis="x", rotation=45, labelsize=8)
+
+        plt.suptitle("Hourly Arrival Rate and Mean Waiting Time (2 Servers)")
+        plt.tight_layout()
+        plt.savefig("assignment_2/img/arrival_rate_vs_waiting_time.png", dpi=300)
+        plt.show()
