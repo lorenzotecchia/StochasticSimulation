@@ -59,6 +59,7 @@ class SecurityLane:
         self.service_time_standard_dev = st_std
         self.n_customers = n_customers
 
+        # ensure non-negative service time
         self.service_times = stats.truncnorm.rvs(
             -self.service_time_mean / self.service_time_standard_dev,
             np.inf,
@@ -70,9 +71,6 @@ class SecurityLane:
         self.current_index = 0
 
     def service_passenger(self):
-        # draw from normal distribution
-        # ensure non-negative service time
-
         service_time = self.service_times[self.current_index]
         self.current_index += 1
 
@@ -294,7 +292,12 @@ def plot_waiting_times_cumavg(
     plt.close()
 
 
-def std_sweep(arrival_rate, std_values, R=40, passengers_passed=3000):
+def std_sweep(
+    arrival_rate: float,
+    std_values: float,
+    R: int = 40,
+    passengers_passed: int = 3000,
+):
     means = []
     stds = []
 
@@ -324,7 +327,7 @@ def std_sweep(arrival_rate, std_values, R=40, passengers_passed=3000):
     plt.grid(alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("std_sweep.png")
+    plt.savefig("img/std_sweep.png")
     plt.show()
 
 
@@ -412,15 +415,119 @@ def plot_queue_lengths_all(queue_lengths_collector, scenario_name="Scenario"):
     plt.show()
 
 
+def plot_nservers_cumavg(
+    arrival_rate: float,
+    num_servers_list: list[int] = [1],
+    st_std: float = 0.25,
+    passed_passengers: int = 3000,
+    num_replications: int = 40,
+    reps_to_plot: int = 0,
+    warm_up: int = 0,
+    show: bool = False,
+    save_path: str = "",
+    colors=["black", "red", "purple"],
+):
+    for idx in range(len(num_servers_list)):
+        _, mean_waiting_time, _, waiting_times_collector, _ = run_multiple_simulations(
+            arrival_rate=arrival_rate,
+            st_std=st_std,
+            verbose=False,
+            passengers_passed=passed_passengers,
+            num_servers=num_servers_list[idx],
+            num_replications=num_replications,
+            warm_up=0,
+        )
+
+        for r in range(reps_to_plot):
+            cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
+                1, len(waiting_times_collector[r]) + 1
+            )
+            plt.plot(cumavg, alpha=0.5, lw=0.5)
+
+        avg_per_customer = np.mean(waiting_times_collector, axis=0)
+        cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
+            1, len(avg_per_customer) + 1
+        )
+        plt.plot(
+            cumavg_per_customer,
+            label=f"n of servers: {num_servers_list[idx]}",
+            color=colors[idx],
+        )
+        print(
+            f"for {num_servers_list[idx]} servers, waiting time of: {mean_waiting_time}"
+        )
+
+    if warm_up:
+        plt.axvline(x=warm_up, color="red", label="warm up", ls="--")
+
+    plt.xlabel("customer index")
+    plt.ylabel("cumulative average waiting time")
+    plt.title("ensemble-averaged cumulative mean")
+    plt.grid(alpha=0.5)
+    plt.tight_layout()
+    plt.legend()
+
+    if show:
+        plt.show()
+
+    # save if path is there
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_std_sweep2(
+    arrival_rate: float,
+    st_std_range: list[float],
+    num_servers: int,
+    n_steps: int = 1000,
+    passed_passengers: int = 3000,
+    num_replications: int = 40,
+    show: bool = False,
+    save_path: str = "",
+):
+    std_list = np.linspace(st_std_range[0], st_std_range[1], n_steps)
+    average_wt_collector = np.zeros_like(std_list)
+
+    for idx in range(len(std_list)):
+        _, mean_waiting_time, _, _, _ = run_multiple_simulations(
+            arrival_rate=arrival_rate,
+            st_std=std_list[idx],
+            verbose=False,
+            passengers_passed=passed_passengers,
+            num_servers=num_servers,
+            num_replications=num_replications,
+            warm_up=0,
+        )
+        average_wt_collector[idx] = mean_waiting_time
+
+    plt.plot(std_list, average_wt_collector)
+
+    plt.xlabel("standard deviation")
+    plt.ylabel("average waiting time")
+    plt.title(f"waiting time of system with {num_servers} servers")
+    plt.grid(alpha=0.5)
+    plt.tight_layout()
+    plt.legend()
+
+    if show:
+        plt.show()
+
+    # save if path is there
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
 if __name__ == "__main__":
 
     df = load_data("airport.csv")
-    Q2A = False
-    Q2A = False
+    Q2A = True
     WARM_UP_SWEEP = False
     PLOT_WARM_UP_SWEEP = False
     Q2B = True
     HOURLY_ARRIVALS = False
+    PLOT_STD_SWEEP = False
 
     if Q2A:
         utilization = 0.85
@@ -429,7 +536,6 @@ if __name__ == "__main__":
         arrival_rate = utilization / service_time_mean
 
         # TODO we can decide a better warm-up period,
-        # since discarding 1000 customers sometimes leads to rejection of H0 :c
         warm_up = 500
 
         # theoretical waiting time:
@@ -452,11 +558,11 @@ if __name__ == "__main__":
         # hypothesis test
         t_value = 2.021
         validity = check_validity(
-            mean_waiting_time,
-            std_waiting_time,
-            len(waiting_times_collector),
-            theoretical_wt,
-            t_value,
+            average=mean_waiting_time,
+            std=std_waiting_time,
+            length=R,
+            theoretical_value=theoretical_wt,
+            t_value=t_value,
         )
 
         print("------SECURITY LANE SIMULATION------")
@@ -470,9 +576,13 @@ if __name__ == "__main__":
         print(f"theoretical steady-state solution: {theoretical_wt}")
         print(f"Not reject H0: {validity}")
 
-        """  plot_waiting_times_cumavg(
-            waiting_times_collector, 20, warm_up, save_path="img/cumavg_2A.png"
-        ) """
+        plot_nservers_cumavg(
+            arrival_rate=arrival_rate,
+            num_servers_list=[1],
+            reps_to_plot=20,
+            warm_up=warm_up,
+            save_path="img/cumavg_2A.png",
+        )
 
     if WARM_UP_SWEEP:
         utilization = 0.85
@@ -486,7 +596,7 @@ if __name__ == "__main__":
         stats_collector = []
         for warm_up in warm_ups:
             print(f"Running warm-up period: {warm_up}")
-            _, mean, std, _, _ = run_multiple_simulations(
+            _, mean, std, _, _, _ = run_multiple_simulations(
                 arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
             )
 
@@ -541,20 +651,16 @@ if __name__ == "__main__":
         plt.show()
 
     if Q2B:
+        warm_up = 0
         arrival_rate = get_arrival_rate(df, "September")
-
-        print(arrival_rate)
-
-        # 1. Standard deviation sweep
-        std_values = np.linspace(0.05, 1.0, 20)
-        std_sweep(arrival_rate, std_values)
-
+        print(f"arrival rate: {arrival_rate}")
         R = 40
+
+        print("------SECURITY LANE SIMULATION------")
+        print("------------Q2B  RESULTS------------")
 
         # CURRENT OPERATIONS
-        # R replications
-
-        R = 40
+        print("---------CURRENT OPERATIONS---------")
         (
             passengers_passed,
             mean_waiting_time,
@@ -585,7 +691,7 @@ if __name__ == "__main__":
         )
 
         # ADD MORE SERVERS
-        print("-------------2  SERVERS-------------")
+        print("------------ADD  SERVERS------------")
 
         (
             passengers_passed,
@@ -594,13 +700,34 @@ if __name__ == "__main__":
             waiting_times_collector,
             queue_lengths_collector,
         ) = run_multiple_simulations(
-            arrival_rate=arrival_rate, num_replications=R, num_servers=2
+            arrival_rate=arrival_rate,
+            num_replications=R,
+            num_servers=2,
+            passengers_passed=3500,
         )
 
         print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
         print(
             f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
             f"Standard deviation of waiting time: {std_waiting_time} minutes",
+        )
+
+        plot_nservers_cumavg(
+            num_servers_list=[1, 2, 3],
+            arrival_rate=arrival_rate,
+            passed_passengers=3000,
+            save_path="img/cumavg_123.png",
+            num_replications=R,
+            colors=["blue", "orange", "green"],
+        )
+
+        plot_nservers_cumavg(
+            num_servers_list=[4, 5],
+            arrival_rate=arrival_rate,
+            passed_passengers=3000,
+            save_path="img/cumavg_45.png",
+            num_replications=R,
+            reps_to_plot=20,
         )
 
         #  REDUCE VARIANCE
@@ -613,7 +740,7 @@ if __name__ == "__main__":
             waiting_times_collector,
             queue_lengths_collector,
         ) = run_multiple_simulations(
-            arrival_rate=arrival_rate, st_std=2, num_replications=R
+            arrival_rate=arrival_rate, st_std=0.1, num_replications=R
         )
 
         print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
@@ -621,6 +748,28 @@ if __name__ == "__main__":
             f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
             f"Standard deviation of waiting time: {std_waiting_time} minutes",
         )
+
+        if PLOT_STD_SWEEP:
+            std_values = np.linspace(0.05, 1.0, 100)
+            std_sweep(arrival_rate, std_values)
+
+            plot_std_sweep2(
+                arrival_rate=arrival_rate,
+                st_std_range=[0.01, 1],
+                num_servers=4,
+                n_steps=1000,
+                passed_passengers=3000,
+                save_path="img/sweep_4_servers.png",
+            )
+
+            plot_std_sweep2(
+                arrival_rate=arrival_rate,
+                st_std_range=[0.01, 1],
+                num_servers=5,
+                n_steps=1000,
+                passed_passengers=3000,
+                save_path="img/sweep_5_servers.png",
+            )
 
     # 4. Varying arrival rates over the day
     if HOURLY_ARRIVALS:
