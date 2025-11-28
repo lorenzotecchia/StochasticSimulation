@@ -263,20 +263,17 @@ def run_multiple_simulations(
         std_waiting_time,
         waiting_times_collector,
         queue_length_collector,
-        utilizations_collector,
     )
 
 
-def check_validity(sample: list, theoretical_value: float, t_value: float) -> bool:
-    t_stat = (np.mean(sample) - theoretical_value) / (
-        np.std(sample) / np.sqrt(len(sample))
-    )
-    return abs(t_stat) < t_value
+def check_validity(
+    average: float, std: float, length: int, theoretical_value: float, t_value: float
+) -> bool:
+
+    t_stat = (average - theoretical_value) / (std / np.sqrt(length))
+    return t_stat < t_value
 
 
-<<<<<<< HEAD
-=======
-# TODO this function can be deleted
 def plot_waiting_times_cumavg(
     waiting_times_collector: list,
     reps_to_plot: int,
@@ -319,7 +316,6 @@ def plot_waiting_times_cumavg(
     plt.close()
 
 
->>>>>>> refs/remotes/origin/main
 def std_sweep(
     arrival_rate: float,
     std_values: float,
