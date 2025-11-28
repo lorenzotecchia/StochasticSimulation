@@ -37,6 +37,8 @@ def load_data(file_path) -> pd.DataFrame:
     data = data.drop(
         columns=["Europe Flights", "Intercontinental Flights", "Total Flights"]
     )
+    # drop rows later than 2019
+    data = data[(data["Year"] < 2020) & (data["Year"] >= 2015)]
     return data
 
 
@@ -48,6 +50,8 @@ def get_one_month(df: pd.DataFrame, month: str) -> pd.DataFrame:
 def get_arrival_rate(df: pd.DataFrame, month: str, lanes: int = 50) -> float:
     """Calculates per minute arrival rate for a single lane if n is not specified.
     Assumes 16 hours of operation per day and 30 days in a month."""
+
+    # only get september data
 
     one_month = get_one_month(df, month)
     mean_arrival = one_month["Total Passengers"].mean()
@@ -724,6 +728,14 @@ def run_Q2B(df, plot_std_sweep=False):
         utilizations_collector,
     ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
 
+    (pp_n2, wt_n2, wt_std_n2, _, _) = run_multiple_simulations(
+        arrival_rate=arrival_rate, num_replications=R, num_servers=2
+    )
+
+    (pp_s01, wt_s01, wt_std_s01, _, _) = run_multiple_simulations(
+        arrival_rate=arrival_rate, st_std=0.1, num_replications=R
+    )
+
     per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
 
     plot_average_waiting_times(per_sim_means, "Baseline")
@@ -732,9 +744,12 @@ def run_Q2B(df, plot_std_sweep=False):
     plot_queue_length_mean(queue_lengths_collector, "Baseline")
 
     print("------Q2B RESULTS: CURRENT OPS------")
-    print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-    print(f"Mean waiting: {mean_waiting_time:.2f} min")
-    print(f"Std waiting:  {std_waiting_time:.2f} min")
+    print(f"Stats       | Mean Waiting Time (min) | Std Dev (min)")
+    print(
+        f"Baseline:   | {mean_waiting_time:.2f}                 | {std_waiting_time:.2f}"
+    )
+    print(f"Option A:   | {wt_n2:.2f}                  | {wt_std_n2:.2f}")
+    print(f"Option B:   | {wt_s01:.2f}                 | {wt_std_s01:.2f}")
 
     # Add servers
     run_multiple_simulations(arrival_rate, num_servers=2, n_customers=3500)
@@ -1048,12 +1063,18 @@ def save_warm_up(path: str, arrival_rate: float):
 
 def main():
     df = load_data("airport.csv")
+    Q1 = True
     Q2A = True
     WARM_UP_SWEEP = False
-    Q2B = False
-    HOURLY_ARRIVALS = True
+    Q2B = True
+    HOURLY_ARRIVALS = False
     PLOT_STD_SWEEP = False
     PLOT_3D_MEAN_STD_SWEEP = False
+
+    if Q1:
+        print(
+            f"Mean Arrival Rate for September 2015-2019 {get_arrival_rate(df, "September")}"
+        )
 
     if Q2A:
         run_Q2A(df)
@@ -1065,13 +1086,16 @@ def main():
         run_2D_std_sweep(df)
 
     if WARM_UP_SWEEP:
+        compute_warm_up = False
+
         path = "assignment_2/data/warm_up_sweep.npy"
         utilization = 0.85
         service_time_mean = 1
         service_time_std = 0.25
         arrival_rate = utilization / service_time_mean
 
-        save_warm_up(path, arrival_rate)
+        if compute_warm_up:
+            save_warm_up(path, arrival_rate)
 
         plot_warm_up_sweep(
             utilization, service_time_mean, service_time_std, arrival_rate
