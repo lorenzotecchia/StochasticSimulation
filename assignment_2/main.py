@@ -567,7 +567,7 @@ def plot3D_std_mean_sweep(
     std_range: list[float],
     mu_range: list[float],
     num_servers: int,
-    passed_passengers: int = 3000,
+    n_customers: int = 3000,
     num_replications: int = 40,
     show: bool = False,
     save_path: str = "assignment_2/img/",
@@ -581,7 +581,7 @@ def plot3D_std_mean_sweep(
                 st_std=std,
                 st_mean=mu,
                 verbose=False,
-                passengers_passed=passed_passengers,
+                n_customers=n_csutomers,
                 num_servers=num_servers,
                 num_replications=num_replications,
                 warm_up=0,
@@ -737,12 +737,12 @@ def run_Q2B(df, plot_std_sweep=False):
     print(f"Std waiting:  {std_waiting_time:.2f} min")
 
     # Add servers
-    run_multiple_simulations(arrival_rate, num_servers=2, passengers_passed=3500)
+    run_multiple_simulations(arrival_rate, num_servers=2, n_customers=3500)
 
     plot_nservers_cumavg(
         num_servers_list=[1, 2, 3],
         arrival_rate=arrival_rate,
-        passed_passengers=3000,
+        n_customers=3000,
         save_path="assignment_2/img/",
         show=False,
         num_replications=R,
@@ -776,7 +776,7 @@ def run_3D_sweep(df):
         std_range,
         mu_range,
         num_servers,
-        passed_passengers=3000,
+        n_customers=3000,
         num_replications=40,
         save_path="assignment_2/img/",
         show=False,
@@ -799,7 +799,7 @@ def run_2D_std_sweep(df):
             st_std_range=[0.01, 1],
             num_servers=n,
             n_steps=300,  # keep lightweight unless needed
-            passed_passengers=3000,
+            n_customers=3000,
             num_replications=R,
             save_path=f"assignment_2/img/sweep_{n}_servers.png",
             show=False,
@@ -857,7 +857,7 @@ def plot_hourly_arrivals():
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate,
             num_replications=R,
-            passengers_passed=max_passengers,
+            n_customers=max_passengers,
             init_passengers=passing_ql,
             verbose=False,
             stop_time=480,
@@ -969,7 +969,7 @@ def plot_nservers_cumavg(
     arrival_rate: float,
     num_servers_list: list[int] = [1],
     st_std: float = 0.25,
-    passed_passengers: int = 3000,
+    n_customers: int = 3000,
     num_replications: int = 40,
     reps_to_plot: int = 0,
     warm_up: int = 0,
@@ -983,7 +983,7 @@ def plot_nservers_cumavg(
                 arrival_rate=arrival_rate,
                 st_std=st_std,
                 verbose=False,
-                passengers_passed=passed_passengers,
+                n_customers=n_customers,
                 num_servers=num_servers_list[idx],
                 num_replications=num_replications,
                 warm_up=0,
