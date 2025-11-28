@@ -267,11 +267,14 @@ def run_multiple_simulations(
     )
 
 
-def check_validity(sample: list, theoretical_value: float, t_value: float) -> bool:
+def two_sides_test(sample: list, theoretical_value: float, alpha: float = 0.05) -> bool:
+    t_crit = stats.t.ppf(q=1 - alpha / 2, df=len(sample))
     t_stat = (np.mean(sample) - theoretical_value) / (
         np.std(sample) / np.sqrt(len(sample))
     )
-    return abs(t_stat) < t_value
+    print(t_crit, len(sample), np.mean(sample))
+    reject = abs(t_stat) < t_crit
+    return not reject
 
 
 # TODO this function can be deleted
@@ -699,8 +702,8 @@ def run_Q2A(df):
     print(f"Theoretical steady-state: {theoretical_wt:.3f}")
     print(
         "Not reject H0:",
-        check_validity(
-            np.mean(waiting_times_collector, axis=1), theoretical_wt, t_value=2.021
+        two_sides_test(
+            np.mean(waiting_times_collector, axis=1), theoretical_wt, alpha=0.05
         ),
     )
 
@@ -719,21 +722,31 @@ def run_Q2B(df, plot_std_sweep=False):
     arrival_rate = get_arrival_rate(df, "September")
     R = 40
 
+    alpha = 0.05
+
     (
         passengers_passed,
-        mean_waiting_time,
+        mean_waiting_time_baseline,
         std_waiting_time,
         waiting_times_collector,
         queue_lengths_collector,
         utilizations_collector,
     ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
 
-    (pp_n2, wt_n2, wt_std_n2, _, _) = run_multiple_simulations(
+    (pp_n2, wt_n2, wt_std_n2, wt_col_n2, _, _) = run_multiple_simulations(
         arrival_rate=arrival_rate, num_replications=R, num_servers=2
     )
 
-    (pp_s01, wt_s01, wt_std_s01, _, _) = run_multiple_simulations(
+    test_option_A = two_sides_test(
+        np.mean(wt_col_n2, axis=1), mean_waiting_time_baseline, alpha
+    )
+
+    (pp_s01, wt_s01, wt_std_s01, wt_col_s01, _, _) = run_multiple_simulations(
         arrival_rate=arrival_rate, st_std=0.1, num_replications=R
+    )
+
+    test_option_B = two_sides_test(
+        np.mean(wt_col_s01, axis=1), mean_waiting_time_baseline, alpha
     )
 
     per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
@@ -744,16 +757,18 @@ def run_Q2B(df, plot_std_sweep=False):
     plot_queue_length_mean(queue_lengths_collector, "Baseline")
 
     print("------Q2B RESULTS: CURRENT OPS------")
-    print(f"Stats       | Mean Waiting Time (min) | Std Dev (min)")
+    print(rf"Stats       | Mean Waiting Time (min) | Std Dev (min) | Reject $H_0$")
     print(
-        f"Baseline:   | {mean_waiting_time:.2f}                 | {std_waiting_time:.2f}"
+        f"Baseline:   | {mean_waiting_time_baseline:.2f}                 | {std_waiting_time:.2f}"
     )
-    print(f"Option A:   | {wt_n2:.2f}                  | {wt_std_n2:.2f}")
-    print(f"Option B:   | {wt_s01:.2f}                 | {wt_std_s01:.2f}")
+    print(
+        f"Option A:   | {wt_n2:.2f}                  | {wt_std_n2:.2f}                  |{test_option_A}"
+    )
+    print(
+        f"Option B:   | {wt_s01:.2f}                 | {wt_std_s01:.2f}                  |{test_option_B}"
+    )
 
     # Add servers
-    run_multiple_simulations(arrival_rate, num_servers=2, n_customers=3500)
-
     plot_nservers_cumavg(
         num_servers_list=[1, 2, 3],
         arrival_rate=arrival_rate,
@@ -1064,7 +1079,7 @@ def save_warm_up(path: str, arrival_rate: float):
 def main():
     df = load_data("airport.csv")
     Q1 = True
-    Q2A = True
+    Q2A = False
     WARM_UP_SWEEP = False
     Q2B = True
     HOURLY_ARRIVALS = False
