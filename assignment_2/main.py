@@ -1,7 +1,6 @@
 import itertools
 import os
 
-os.makedirs("img", exist_ok=True)
 os.makedirs("assignment_2/img", exist_ok=True)
 os.makedirs("assignment_2/data", exist_ok=True)
 
@@ -282,7 +281,7 @@ def plot_waiting_times_cumavg(
     waiting_times_collector: list,
     reps_to_plot: int,
     warm_up: int = 0,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
     show: bool = False,
 ):
     plt.figure(figsize=(10, 6), dpi=300)
@@ -313,7 +312,7 @@ def plot_waiting_times_cumavg(
     plt.legend(fontsize=10, loc="best")
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path + "plot_bello.png", dpi=300, bbox_inches="tight")
 
     if show:
         plt.show()
@@ -451,7 +450,7 @@ def plot_waiting_times_cumavg(
     waiting_times_collector: list,
     reps_to_plot: int,
     warm_up: int = 0,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
     show: bool = False,
 ):
     plt.figure()
@@ -494,7 +493,7 @@ def plot_waiting_times_cumavg(
     plt.tight_layout(pad=1.2)
 
     if save_path:
-        plt.savefig(save_path, bbox_inches="tight")
+        plt.savefig(save_path + "miao.png", bbox_inches="tight")
     if show:
         plt.show()
     plt.close()
@@ -508,38 +507,58 @@ def plot_std_sweep2(
     passed_passengers: int = 3000,
     num_replications: int = 40,
     show: bool = False,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
 ):
     std_list = np.linspace(st_std_range[0], st_std_range[1], n_steps)
-    average_wt_collector = np.zeros_like(std_list)
+    mean_collector = np.zeros_like(std_list)
+    ci_halfwidth_collector = np.zeros_like(std_list)
 
-    for idx in range(len(std_list)):
-        _, mean_waiting_time, _, _, _ = run_multiple_simulations(
+    for idx, st_std in enumerate(std_list):
+        (
+            _,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+            _,
+        ) = run_multiple_simulations(
             arrival_rate=arrival_rate,
-            st_std=std_list[idx],
+            st_std=st_std,
             verbose=False,
             passengers_passed=passed_passengers,
             num_servers=num_servers,
             num_replications=num_replications,
             warm_up=0,
         )
-        average_wt_collector[idx] = mean_waiting_time
 
-    plt.plot(std_list, average_wt_collector)
+        # Store mean
+        mean_collector[idx] = mean_waiting_time
 
-    plt.xlabel("standard deviation")
-    plt.ylabel("average waiting time")
-    plt.title(f"waiting time of system with {num_servers} servers")
-    plt.grid(alpha=0.5)
-    plt.tight_layout(pad=1.2)
+        # 95% confidence interval for mean across replications
+        ci_halfwidth_collector[idx] = (
+            1.96 * std_waiting_time / np.sqrt(num_replications)
+        )
+
+    lower = mean_collector - ci_halfwidth_collector
+    upper = mean_collector + ci_halfwidth_collector
+
+    # Plot mean with CI band
+    plt.figure(figsize=(10, 6), dpi=300)
+    plt.plot(std_list, mean_collector, label="Mean waiting time")
+    plt.fill_between(
+        std_list, lower, upper, alpha=0.25, label="95% Confidence Interval"
+    )
+
+    plt.xlabel("Service time standard deviation σ")
+    plt.ylabel("Average waiting time (minutes)")
+    plt.title(f"Effect of σ on Waiting Times ({num_servers} Servers)")
+    plt.grid(alpha=0.35)
     plt.legend()
+    plt.tight_layout(pad=1.2)
 
+    if save_path:
+        plt.savefig(save_path + "sweep_with_CI.png", dpi=300, bbox_inches="tight")
     if show:
         plt.show()
-
-    # save if path is there
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -551,7 +570,7 @@ def plot3D_std_mean_sweep(
     passed_passengers: int = 3000,
     num_replications: int = 40,
     show: bool = False,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
 ):
 
     mean_wt_matrix = np.zeros((len(std_range), len(mu_range)))
@@ -570,8 +589,7 @@ def plot3D_std_mean_sweep(
             mean_wt_matrix[std_idx, mu_idx] = mean_waiting_time
 
     fig = plt.figure(figsize=(12, 8), dpi=300)
-    ax = fig.add_subplot(111, projection="3d", constrained_layout=True)
-
+    ax = fig.add_subplot(111, projection="3d")
     X, Y = np.meshgrid(mu_range, std_range)
     surf = ax.plot_surface(
         Y,
@@ -594,14 +612,16 @@ def plot3D_std_mean_sweep(
     plt.tight_layout(pad=2.5)
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(
+            save_path + "plot3D_std_mean_sweep.png", dpi=300, bbox_inches="tight"
+        )
 
     if show:
         plt.show()
     plt.close()
 
 
-def plot_warm_up_sweep(utilization, service_time_mean, service_time_std):
+def plot_warm_up_sweep(utilization, service_time_mean, service_time_std, arrival_rate):
 
     stats_collector = np.load("assignment_2/data/warm_up_sweep.npy")
     warm_ups = stats_collector[:, 0]
@@ -684,7 +704,8 @@ def run_Q2A(df):
         num_servers_list=[1],
         reps_to_plot=20,
         warm_up=warm_up,
-        show=True,
+        save_path="assignment_2/img/",
+        show=False,
     )
 
 
@@ -720,8 +741,8 @@ def run_Q2B(df, plot_std_sweep=False):
         num_servers_list=[1, 2, 3],
         arrival_rate=arrival_rate,
         passed_passengers=3000,
-        save_path="img/",
-        show=True,
+        save_path="assignment_2/img/",
+        show=False,
         num_replications=R,
         colors=["blue", "orange", "green"],
     )
@@ -755,7 +776,8 @@ def run_3D_sweep(df):
         num_servers,
         passed_passengers=3000,
         num_replications=40,
-        show=True,
+        save_path="assignment_2/img/",
+        show=False,
     )
 
 
@@ -777,7 +799,7 @@ def run_2D_std_sweep(df):
             n_steps=300,  # keep lightweight unless needed
             passed_passengers=3000,
             num_replications=R,
-            save_path=f"img/sweep_{n}_servers.png",
+            save_path=f"assignment_2/img/sweep_{n}_servers.png",
             show=False,
         )
 
@@ -949,7 +971,7 @@ def plot_nservers_cumavg(
     reps_to_plot: int = 0,
     warm_up: int = 0,
     show: bool = False,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
     colors=["black", "red", "purple"],
 ):
     for idx in range(len(num_servers_list)):
@@ -1001,14 +1023,15 @@ def plot_nservers_cumavg(
     plt.close()
 
 
-def save_warm_up(path: str):
-    warm_ups = range(0, 1001, 10)
-    R = 1000
+def save_warm_up(path: str, arrival_rate: float):
+
+    warm_ups = range(0, 1001, 100)
+    R = 40
 
     stats_collector = []
     for warm_up in warm_ups:
         print(f"Running warm-up period: {warm_up}")
-        _, mean, std, _, _, _ = run_multiple_simulations(
+        _, mean, std, _, _ = run_multiple_simulations(
             arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
         )
 
@@ -1020,13 +1043,12 @@ def save_warm_up(path: str):
 
 def main():
     df = load_data("airport.csv")
-    Q2A = True
-    WARM_UP_SWEEP = True
-    PLOT_WARM_UP_SWEEP = True
-    Q2B = True
+    Q2A = False
+    WARM_UP_SWEEP = False
+    Q2B = False
     HOURLY_ARRIVALS = True
-    PLOT_STD_SWEEP = True
-    PLOT_3D_MEAN_STD_SWEEP = True
+    PLOT_STD_SWEEP = False
+    PLOT_3D_MEAN_STD_SWEEP = False
 
     if Q2A:
         run_Q2A(df)
@@ -1038,23 +1060,17 @@ def main():
         run_2D_std_sweep(df)
 
     if WARM_UP_SWEEP:
-        utilization = 0.85
-        service_time_mean = 1
-        service_time_std = 0.25
-        arrival_rate = utilization / service_time_mean
-
         path = "assignment_2/data/warm_up_sweep.npy"
-
-        save_warm_up(path)
-
-    if PLOT_WARM_UP_SWEEP:
-
         utilization = 0.85
         service_time_mean = 1
         service_time_std = 0.25
         arrival_rate = utilization / service_time_mean
 
-        plot_warm_up_sweep(utilization, service_time_mean, service_time_std)
+        save_warm_up(path, arrival_rate)
+
+        plot_warm_up_sweep(
+            utilization, service_time_mean, service_time_std, arrival_rate
+        )
 
     # Varying arrival rates over the day
     if HOURLY_ARRIVALS:
