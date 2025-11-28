@@ -192,9 +192,6 @@ def run_simulation(
             queue_lengths=queue_lengths,
             waiting_times=waiting_times,
             verbose=verbose,
-            passengers_passed=n_customers,
-            st_std=st_std,
-            st_mean=st_mean,
             init_passengers=init_passengers,
         )
     )
@@ -699,7 +696,7 @@ def run_Q2A(df):
     print(
         "Not reject H0:",
         check_validity(
-            mean_waiting_time, std_waiting_time, R, theoretical_wt, t_value=2.021
+            np.mean(waiting_times_collector, axis=1), theoretical_wt, t_value=2.021
         ),
     )
 
@@ -1051,7 +1048,7 @@ def save_warm_up(path: str, arrival_rate: float):
 
 def main():
     df = load_data("airport.csv")
-    Q2A = False
+    Q2A = True
     WARM_UP_SWEEP = False
     Q2B = False
     HOURLY_ARRIVALS = True
