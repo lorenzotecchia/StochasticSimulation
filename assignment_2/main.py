@@ -263,6 +263,7 @@ def run_multiple_simulations(
         std_waiting_time,
         waiting_times_collector,
         queue_length_collector,
+        utilizations_collector,
     )
 
 
@@ -272,48 +273,6 @@ def check_validity(
 
     t_stat = (average - theoretical_value) / (std / np.sqrt(length))
     return t_stat < t_value
-
-
-def plot_waiting_times_cumavg(
-    waiting_times_collector: list,
-    reps_to_plot: int,
-    warm_up: int = 0,
-    save_path: str = "assignment_2/img/",
-    show: bool = False,
-):
-    plt.figure(figsize=(10, 6), dpi=300)
-    for r in range(reps_to_plot):
-        cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
-            1, len(waiting_times_collector[r]) + 1
-        )
-        plt.plot(cumavg, alpha=0.45, linewidth=1)
-
-    avg_per_customer = np.mean(waiting_times_collector, axis=0)
-    cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
-        1, len(avg_per_customer) + 1
-    )
-    plt.plot(
-        cumavg_per_customer,
-        color="black",
-        label="ensemble-averaged cumulative mean",
-        linewidth=2.2,
-    )
-
-    if warm_up:
-        plt.axvline(x=warm_up, color="red", label="warm up", ls="--", linewidth=1.6)
-
-    plt.xlabel("Customer Index", fontsize=12)
-    plt.ylabel("Cumulative Average Waiting Time (min)", fontsize=12)
-    plt.grid(alpha=0.35, linestyle="--")
-    plt.tight_layout(pad=2.0)
-    plt.legend(fontsize=10, loc="best")
-
-    if save_path:
-        plt.savefig(save_path + "plot_bello.png", dpi=300, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close()
 
 
 def std_sweep(
@@ -584,7 +543,7 @@ def plot3D_std_mean_sweep(
                 st_std=std,
                 st_mean=mu,
                 verbose=False,
-                n_customers=n_csutomers,
+                n_customers=n_customers,
                 num_servers=num_servers,
                 num_replications=num_replications,
                 warm_up=0,
@@ -727,11 +686,11 @@ def run_Q2B(df, plot_std_sweep=False):
         utilizations_collector,
     ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
 
-    (pp_n2, wt_n2, wt_std_n2, _, _) = run_multiple_simulations(
+    (pp_n2, wt_n2, wt_std_n2, _, _, _) = run_multiple_simulations(
         arrival_rate=arrival_rate, num_replications=R, num_servers=2
     )
 
-    (pp_s01, wt_s01, wt_std_s01, _, _) = run_multiple_simulations(
+    (pp_s01, wt_s01, wt_std_s01, _, _, _) = run_multiple_simulations(
         arrival_rate=arrival_rate, st_std=0.1, num_replications=R
     )
 
@@ -879,21 +838,16 @@ def plot_hourly_arrivals():
     for arrival_rate in tqdm(arrival_rates):
         passing_ql = [ql[-1, 1] for ql in queue_lengths_collector]
 
-        (
-            passengers_passed,
-            mean_waiting_time,
-            std_waiting_time,
-            waiting_times_collector,
-            queue_lengths_collector,
-            utilizations_collector,
-        ) = run_multiple_simulations(
-            arrival_rate=arrival_rate,
-            num_replications=R,
-            n_customers=max_passengers,
-            init_passengers=passing_ql,
-            verbose=False,
-            stop_time=480,
-            num_servers=2,
+        (_, mean_waiting_time, _, _, queue_lengths_collector, _) = (
+            run_multiple_simulations(
+                arrival_rate=arrival_rate,
+                num_replications=R,
+                n_customers=max_passengers,
+                init_passengers=passing_ql,
+                verbose=False,
+                stop_time=480,
+                num_servers=2,
+            )
         )
         mean_ql = np.mean([ql[-1, 1] for ql in queue_lengths_collector])
         ql_for_plot.append(mean_ql)
