@@ -549,6 +549,7 @@ def plot3D_std_mean_sweep(
                 st_mean=mu,
                 verbose=False,
                 n_customers=n_customers,
+                n_customers=n_customers,
                 num_servers=num_servers,
                 num_replications=num_replications,
                 warm_up=0,
@@ -559,8 +560,8 @@ def plot3D_std_mean_sweep(
     ax = fig.add_subplot(111, projection="3d")
     X, Y = np.meshgrid(mu_range, std_range)
     surf = ax.plot_surface(
-        Y,
         X,
+        Y,
         mean_wt_matrix,
         cmap="viridis",
         edgecolor="k",
@@ -656,10 +657,10 @@ def run_Q2A(df):
     print("------------Q2A  RESULTS------------")
     print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
     print(
-        f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n"
-        f"Standard deviation: {std_waiting_time:.2f} minutes"
+        f"Mean waiting time: {mean_waiting_time:.3f} minutes,\n"
+        f"Standard deviation: {std_waiting_time:.3f} minutes"
     )
-    print(f"Theoretical steady-state: {theoretical_wt:.3f}")
+    print(f"Theoretical steady-state: {theoretical_wt:.3f} minutes")
     print(
         "Not reject H0:",
         two_sides_test(
@@ -914,7 +915,6 @@ def plot_hourly_arrivals():
             f"{height:.1f}",  # text
             ha="center",
             va="center",
-            color="darkblue",
             fontsize=6,
             alpha=0.6,
         )
@@ -957,9 +957,13 @@ def plot_hourly_arrivals():
         ]
     )
     axs.tick_params(axis="x", rotation=45, labelsize=8)
+    axs.grid(False)
+    axs2.grid(False)
+    axs3.grid(False)
 
     plt.suptitle("Hourly Arrival Rate and Mean Waiting Time (2 Servers)")
     plt.tight_layout(pad=1.2)
+
     plt.savefig(
         "assignment_2/img/arrival_rate_vs_waiting_time.png",
         dpi=300,
@@ -1015,9 +1019,11 @@ def plot_nservers_cumavg(
     if warm_up:
         plt.axvline(x=warm_up, color="red", label="warm up", ls="--")
 
-    plt.xlabel("customer index")
-    plt.ylabel("cumulative average waiting time")
-    plt.title("ensemble-averaged cumulative mean")
+    plt.xlabel("Customer index")
+    plt.ylabel("Cumulative average waiting time")
+    plt.title(
+        rf"Ensemble-averaged cumulative mean ($R={num_replications}, E(B)=1, \sigma={st_std:.2f}$)"
+    )
     plt.grid(alpha=0.5)
     plt.tight_layout(pad=1.2)
     plt.legend()
@@ -1034,7 +1040,7 @@ def plot_nservers_cumavg(
 def save_warm_up(path: str, arrival_rate: float):
 
     warm_ups = range(0, 1001, 100)
-    R = 40
+    R = 1000
 
     stats_collector = []
     for warm_up in warm_ups:
@@ -1054,10 +1060,10 @@ def main():
     Q1 = True
     Q2A = False
     WARM_UP_SWEEP = False
-    Q2B = True
+    Q2B = False
     HOURLY_ARRIVALS = False
     PLOT_STD_SWEEP = False
-    PLOT_3D_MEAN_STD_SWEEP = False
+    PLOT_3D_MEAN_STD_SWEEP = True
 
     if Q1:
         print(
@@ -1074,7 +1080,7 @@ def main():
         run_2D_std_sweep(df)
 
     if WARM_UP_SWEEP:
-        compute_warm_up = False
+        compute_warm_up = True
 
         path = "assignment_2/data/warm_up_sweep.npy"
         utilization = 0.85
