@@ -37,6 +37,8 @@ def load_data(file_path) -> pd.DataFrame:
     data = data.drop(
         columns=["Europe Flights", "Intercontinental Flights", "Total Flights"]
     )
+    # drop rows later than 2019
+    data = data[(data["Year"] < 2020) & (data["Year"] >= 2015)]
     return data
 
 
@@ -48,6 +50,8 @@ def get_one_month(df: pd.DataFrame, month: str) -> pd.DataFrame:
 def get_arrival_rate(df: pd.DataFrame, month: str, lanes: int = 50) -> float:
     """Calculates per minute arrival rate for a single lane if n is not specified.
     Assumes 16 hours of operation per day and 30 days in a month."""
+
+    # only get september data
 
     one_month = get_one_month(df, month)
     mean_arrival = one_month["Total Passengers"].mean()
@@ -76,6 +80,7 @@ class SecurityLane:
         self.service_time_mean = st_mean
         self.service_time_standard_dev = st_std
         self.n_customers = n_customers
+        self.busy_time = 0.0
 
         # ensure non-negative service time
         self.service_times = stats.truncnorm.rvs(
@@ -86,6 +91,7 @@ class SecurityLane:
             size=self.n_customers,
         )
 
+        self.busy_time = np.sum(self.service_times)
         self.current_index = 0
 
     def service_passenger(self):
@@ -93,6 +99,47 @@ class SecurityLane:
         self.current_index += 1
 
         yield self.env.timeout(service_time)
+
+    def setup(
+        self,
+        arrival_rate: float,
+        waiting_times: list,
+        queue_lengths: list,
+        verbose: bool = False,
+        init_passengers: int = 0,
+    ):
+        """Setting up the security lane simulation"""
+
+        # add passengers that are already in the queue
+        passenger_count = itertools.count()
+        for _ in range(init_passengers):
+            self.env.process(
+                passenger(
+                    self.env,
+                    f"Passenger {next(passenger_count)}",
+                    queue_lengths,
+                    self,
+                    waiting_times,
+                    verbose=verbose,
+                )
+            )
+
+        # add more passengers while running
+        passed = 0
+        while passed < (self.n_customers - init_passengers):
+            yield self.env.timeout(np.random.exponential(1 / arrival_rate))
+            passenger_id = next(passenger_count)
+            self.env.process(
+                passenger(
+                    self.env,
+                    f"Passenger {passenger_id}",
+                    queue_lengths,
+                    self,
+                    waiting_times,
+                    verbose=verbose,
+                )
+            )
+            passed += 1
 
 
 def passenger(
@@ -126,63 +173,12 @@ def passenger(
             print(f"{name} waited for {wait_queue_time:.2f} minutes")
 
 
-def setup(
-    env: simpy.Environment,
-    num_servers: int,
-    arrival_rate: float,
-    waiting_times: list,
-    queue_lengths: list,
-    verbose: bool = False,
-    st_std: float = 0.25,
-    st_mean: float = 1.0,
-    passengers_passed: int = 3000,
-    init_passengers: int = 0,
-):
-    """Setting up the security lane simulation"""
-
-    # create security lane
-    security_lane = SecurityLane(
-        env, num_servers, st_std=st_std, st_mean=st_mean, n_customers=passengers_passed
-    )
-
-    # add passengers that are already in the queue
-    passenger_count = itertools.count()
-    for _ in range(init_passengers):
-        env.process(
-            passenger(
-                env,
-                f"Passenger {next(passenger_count)}",
-                queue_lengths,
-                security_lane,
-                waiting_times,
-                verbose=verbose,
-            )
-        )
-
-    # add more passengers while running
-    passed = 0
-    while passed < (passengers_passed - init_passengers):
-        yield env.timeout(np.random.exponential(1 / arrival_rate))
-        passenger_id = next(passenger_count)
-        env.process(
-            passenger(
-                env,
-                f"Passenger {passenger_id}",
-                queue_lengths,
-                security_lane,
-                waiting_times,
-                verbose=verbose,
-            )
-        )
-        passed += 1
-
-
 def run_simulation(
     arrival_rate: float,
     st_std: float = 0.25,
     st_mean: float = 1.0,
     verbose: bool = False,
-    passengers_passed: int = 3000,
+    n_customers: int = 3000,
     num_servers: int = 1,
     init_passengers: int = 0,
     stop_time: int = 0,
@@ -191,17 +187,15 @@ def run_simulation(
     waiting_times = []
     queue_lengths = []
     env = simpy.Environment()
+    security_lane = SecurityLane(
+        env, num_servers=num_servers, st_std=st_std, n_customers=n_customers
+    )
     env.process(
-        setup(
-            env,
-            num_servers=num_servers,
+        security_lane.setup(
             arrival_rate=arrival_rate,
             queue_lengths=queue_lengths,
             waiting_times=waiting_times,
             verbose=verbose,
-            passengers_passed=passengers_passed,
-            st_std=st_std,
-            st_mean=st_mean,
             init_passengers=init_passengers,
         )
     )
@@ -209,7 +203,7 @@ def run_simulation(
         env.run(until=stop_time)
     else:
         env.run()
-    return waiting_times, queue_lengths
+    return waiting_times, queue_lengths, security_lane.busy_time / env.now
 
 
 def run_multiple_simulations(
@@ -217,7 +211,7 @@ def run_multiple_simulations(
     st_mean: float = 1.0,
     st_std: float = 0.25,
     verbose: bool = False,
-    passengers_passed: int = 3000,
+    n_customers: int = 3000,
     num_servers: int = 1,
     num_replications=40,
     warm_up: int = 0,
@@ -226,13 +220,14 @@ def run_multiple_simulations(
 ):
     waiting_times_collector = []
     queue_length_collector = []
+    utilizations_collector = []
 
     for i, _ in tqdm(enumerate(range(num_replications))):
-        wt, ql = run_simulation(
+        wt, ql, utilization = run_simulation(
             arrival_rate,
             st_mean=st_mean,
             st_std=st_std,
-            passengers_passed=passengers_passed,
+            n_customers=n_customers,
             verbose=verbose,
             num_servers=num_servers,
             init_passengers=(
@@ -244,6 +239,7 @@ def run_multiple_simulations(
         )
         waiting_times_collector.append(wt)
         queue_length_collector.append(ql)
+        utilizations_collector.append(utilization)
 
     # waiting_times_collector = np.array(waiting_times_collector, dtype=object)
     # queue_length_collector = np.array(queue_length_collector, dtype=object)
@@ -252,6 +248,7 @@ def run_multiple_simulations(
     waiting_times_collector = [
         np.array(wt, dtype=float) for wt in waiting_times_collector
     ]
+    utilizations_collector = np.array(utilizations_collector)
 
     passengers_passed = [len(w) for w in waiting_times_collector]
 
@@ -266,33 +263,80 @@ def run_multiple_simulations(
         std_waiting_time,
         waiting_times_collector,
         queue_length_collector,
+        utilizations_collector,
     )
 
 
-def check_validity(
-    average: float, std: float, length: int, theoretical_value: float, t_value: float
-) -> bool:
+def check_validity(sample: list, theoretical_value: float, t_value: float) -> bool:
+    t_stat = (np.mean(sample) - theoretical_value) / (
+        np.std(sample) / np.sqrt(len(sample))
+    )
+    return abs(t_stat) < t_value
 
-    t_stat = (average - theoretical_value) / (std / np.sqrt(length))
-    return t_stat < t_value
+
+<<<<<<< HEAD
+=======
+# TODO this function can be deleted
+def plot_waiting_times_cumavg(
+    waiting_times_collector: list,
+    reps_to_plot: int,
+    warm_up: int = 0,
+    save_path: str = "assignment_2/img/",
+    show: bool = False,
+):
+    plt.figure(figsize=(10, 6), dpi=300)
+    for r in range(reps_to_plot):
+        cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
+            1, len(waiting_times_collector[r]) + 1
+        )
+        plt.plot(cumavg, alpha=0.45, linewidth=1)
+
+    avg_per_customer = np.mean(waiting_times_collector, axis=0)
+    cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
+        1, len(avg_per_customer) + 1
+    )
+    plt.plot(
+        cumavg_per_customer,
+        color="black",
+        label="ensemble-averaged cumulative mean",
+        linewidth=2.2,
+    )
+
+    if warm_up:
+        plt.axvline(x=warm_up, color="red", label="warm up", ls="--", linewidth=1.6)
+
+    plt.xlabel("Customer Index", fontsize=12)
+    plt.ylabel("Cumulative Average Waiting Time (min)", fontsize=12)
+    plt.grid(alpha=0.35, linestyle="--")
+    plt.tight_layout(pad=2.0)
+    plt.legend(fontsize=10, loc="best")
+
+    if save_path:
+        plt.savefig(save_path + "plot_bello.png", dpi=300, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    plt.close()
 
 
+>>>>>>> refs/remotes/origin/main
 def std_sweep(
     arrival_rate: float,
     std_values: float,
     R: int = 40,
-    passengers_passed: int = 3000,
+    n_customers: int = 3000,
+    save_path: str = "",
 ):
     means = []
     stds = []
 
     for st in std_values:
         print(f"Running sweep for σ = {st}")
-        _, mean, sdev, _, _ = run_multiple_simulations(
+        _, mean, sdev, _, _, _ = run_multiple_simulations(
             arrival_rate=arrival_rate,
             st_std=st,
             num_replications=R,
-            passengers_passed=passengers_passed,
+            n_customers=n_customers,
         )
         means.append(mean)
         stds.append(sdev)
@@ -315,8 +359,12 @@ def std_sweep(
     plt.savefig("img/std_sweep.png", bbox_inches="tight")
     plt.show()
 
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
 
-def plot_average_waiting_times(per_sim_means, scenario_name="Scenario"):
+
+def plot_average_waiting_times(per_sim_means, scenario_name="Scenario", save_path=""):
     plt.figure()
 
     plt.hist(per_sim_means, bins=15, alpha=0.6, density=True, label="Simulation means")
@@ -369,7 +417,7 @@ def plot_queue_length_mean(queue_lengths_collector, scenario_name="Scenario"):
     plt.close()
 
 
-def plot_queue_length_single(queue_lengths, scenario_name="Scenario 1"):
+def plot_queue_length_single(queue_lengths, scenario_name="Scenario 1", save_path=""):
     times = [t for t, q in queue_lengths]
     lengths = [q for t, q in queue_lengths]
 
@@ -410,15 +458,15 @@ def plot_waiting_times_cumavg(
     warm_up: int = 0,
     save_path: str = "assignment_2/img/",
     show: bool = False,
+    colors=["black", "red", "purple"],
 ):
     plt.figure()
 
-    # Individual trajectories
     for r in range(reps_to_plot):
         cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
             1, len(waiting_times_collector[r]) + 1
         )
-        plt.plot(cumavg, alpha=0.35, linewidth=1)
+        plt.plot(cumavg, alpha=0.5, lw=0.5)
 
     # Ensemble statistic
     avg_per_customer = np.mean(waiting_times_collector, axis=0)
@@ -462,7 +510,7 @@ def plot_std_sweep2(
     st_std_range: list[float],
     num_servers: int,
     n_steps: int = 1000,
-    passed_passengers: int = 3000,
+    n_customers: int = 3000,
     num_replications: int = 40,
     show: bool = False,
     save_path: str = "assignment_2/img/",
@@ -478,11 +526,12 @@ def plot_std_sweep2(
             std_waiting_time,
             waiting_times_collector,
             _,
+            _,
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate,
             st_std=st_std,
             verbose=False,
-            passengers_passed=passed_passengers,
+            n_customers=n_customers,
             num_servers=num_servers,
             num_replications=num_replications,
             warm_up=0,
@@ -525,7 +574,7 @@ def plot3D_std_mean_sweep(
     std_range: list[float],
     mu_range: list[float],
     num_servers: int,
-    passed_passengers: int = 3000,
+    n_customers: int = 3000,
     num_replications: int = 40,
     show: bool = False,
     save_path: str = "assignment_2/img/",
@@ -534,12 +583,12 @@ def plot3D_std_mean_sweep(
     mean_wt_matrix = np.zeros((len(std_range), len(mu_range)))
     for std_idx, std in enumerate(std_range):
         for mu_idx, mu in enumerate(mu_range):
-            _, mean_waiting_time, _, _, _ = run_multiple_simulations(
+            _, mean_waiting_time, _, _, _, _ = run_multiple_simulations(
                 arrival_rate=arrival_rate,
                 st_std=std,
                 st_mean=mu,
                 verbose=False,
-                passengers_passed=passed_passengers,
+                n_customers=n_csutomers,
                 num_servers=num_servers,
                 num_replications=num_replications,
                 warm_up=0,
@@ -638,6 +687,7 @@ def run_Q2A(df):
         std_waiting_time,
         waiting_times_collector,
         queue_lengths_collector,
+        utilizations_collector,
     ) = run_multiple_simulations(
         arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
     )
@@ -653,7 +703,7 @@ def run_Q2A(df):
     print(
         "Not reject H0:",
         check_validity(
-            mean_waiting_time, std_waiting_time, R, theoretical_wt, t_value=2.021
+            np.mean(waiting_times_collector, axis=1), theoretical_wt, t_value=2.021
         ),
     )
 
@@ -678,7 +728,16 @@ def run_Q2B(df, plot_std_sweep=False):
         std_waiting_time,
         waiting_times_collector,
         queue_lengths_collector,
+        utilizations_collector,
     ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
+
+    (pp_n2, wt_n2, wt_std_n2, _, _) = run_multiple_simulations(
+        arrival_rate=arrival_rate, num_replications=R, num_servers=2
+    )
+
+    (pp_s01, wt_s01, wt_std_s01, _, _) = run_multiple_simulations(
+        arrival_rate=arrival_rate, st_std=0.1, num_replications=R
+    )
 
     per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
 
@@ -688,17 +747,20 @@ def run_Q2B(df, plot_std_sweep=False):
     plot_queue_length_mean(queue_lengths_collector, "Baseline")
 
     print("------Q2B RESULTS: CURRENT OPS------")
-    print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-    print(f"Mean waiting: {mean_waiting_time:.2f} min")
-    print(f"Std waiting:  {std_waiting_time:.2f} min")
+    print(f"Stats       | Mean Waiting Time (min) | Std Dev (min)")
+    print(
+        f"Baseline:   | {mean_waiting_time:.2f}                 | {std_waiting_time:.2f}"
+    )
+    print(f"Option A:   | {wt_n2:.2f}                  | {wt_std_n2:.2f}")
+    print(f"Option B:   | {wt_s01:.2f}                 | {wt_std_s01:.2f}")
 
     # Add servers
-    run_multiple_simulations(arrival_rate, num_servers=2, passengers_passed=3500)
+    run_multiple_simulations(arrival_rate, num_servers=2, n_customers=3500)
 
     plot_nservers_cumavg(
         num_servers_list=[1, 2, 3],
         arrival_rate=arrival_rate,
-        passed_passengers=3000,
+        n_customers=3000,
         save_path="assignment_2/img/",
         show=False,
         num_replications=R,
@@ -750,7 +812,7 @@ def run_3D_sweep(df):
         std_range,
         mu_range,
         num_servers,
-        passed_passengers=3000,
+        n_customers=3000,
         num_replications=40,
         save_path="assignment_2/img/",
         show=False,
@@ -773,7 +835,7 @@ def run_2D_std_sweep(df):
             st_std_range=[0.01, 1],
             num_servers=n,
             n_steps=300,  # keep lightweight unless needed
-            passed_passengers=3000,
+            n_customers=3000,
             num_replications=R,
             save_path=f"assignment_2/img/sweep_{n}_servers.png",
             show=False,
@@ -827,10 +889,11 @@ def plot_hourly_arrivals():
             std_waiting_time,
             waiting_times_collector,
             queue_lengths_collector,
+            utilizations_collector,
         ) = run_multiple_simulations(
             arrival_rate=arrival_rate,
             num_replications=R,
-            passengers_passed=max_passengers,
+            n_customers=max_passengers,
             init_passengers=passing_ql,
             verbose=False,
             stop_time=480,
@@ -942,7 +1005,7 @@ def plot_nservers_cumavg(
     arrival_rate: float,
     num_servers_list: list[int] = [1],
     st_std: float = 0.25,
-    passed_passengers: int = 3000,
+    n_customers: int = 3000,
     num_replications: int = 40,
     reps_to_plot: int = 0,
     warm_up: int = 0,
@@ -951,14 +1014,16 @@ def plot_nservers_cumavg(
     colors=["black", "red", "purple"],
 ):
     for idx in range(len(num_servers_list)):
-        _, mean_waiting_time, _, waiting_times_collector, _ = run_multiple_simulations(
-            arrival_rate=arrival_rate,
-            st_std=st_std,
-            verbose=False,
-            passengers_passed=passed_passengers,
-            num_servers=num_servers_list[idx],
-            num_replications=num_replications,
-            warm_up=0,
+        _, mean_waiting_time, _, waiting_times_collector, _, _ = (
+            run_multiple_simulations(
+                arrival_rate=arrival_rate,
+                st_std=st_std,
+                verbose=False,
+                n_customers=n_customers,
+                num_servers=num_servers_list[idx],
+                num_replications=num_replications,
+                warm_up=0,
+            )
         )
 
         for r in range(reps_to_plot):
@@ -1007,7 +1072,7 @@ def save_warm_up(path: str, arrival_rate: float):
     stats_collector = []
     for warm_up in warm_ups:
         print(f"Running warm-up period: {warm_up}")
-        _, mean, std, _, _ = run_multiple_simulations(
+        _, mean, std, _, _, _ = run_multiple_simulations(
             arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
         )
 
@@ -1019,12 +1084,18 @@ def save_warm_up(path: str, arrival_rate: float):
 
 def main():
     df = load_data("airport.csv")
-    Q2A = False
+    Q1 = True
+    Q2A = True
     WARM_UP_SWEEP = False
-    Q2B = False
-    HOURLY_ARRIVALS = True
+    Q2B = True
+    HOURLY_ARRIVALS = False
     PLOT_STD_SWEEP = False
     PLOT_3D_MEAN_STD_SWEEP = False
+
+    if Q1:
+        print(
+            f"Mean Arrival Rate for September 2015-2019 {get_arrival_rate(df, "September")}"
+        )
 
     if Q2A:
         run_Q2A(df)
@@ -1036,13 +1107,16 @@ def main():
         run_2D_std_sweep(df)
 
     if WARM_UP_SWEEP:
+        compute_warm_up = False
+
         path = "assignment_2/data/warm_up_sweep.npy"
         utilization = 0.85
         service_time_mean = 1
         service_time_std = 0.25
         arrival_rate = utilization / service_time_mean
 
-        save_warm_up(path, arrival_rate)
+        if compute_warm_up:
+            save_warm_up(path, arrival_rate)
 
         plot_warm_up_sweep(
             utilization, service_time_mean, service_time_std, arrival_rate
