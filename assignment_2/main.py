@@ -1,12 +1,30 @@
 import itertools
 import os
 
+os.makedirs("assignment_2/img", exist_ok=True)
+os.makedirs("assignment_2/data", exist_ok=True)
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import simpy
 from scipy import stats
 from tqdm import tqdm
+
+# Global visual style
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams.update(
+    {
+        "figure.dpi": 300,
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 10,
+        "figure.figsize": (10, 6),
+        "lines.linewidth": 2,
+    }
+)
 
 
 def load_data(file_path) -> pd.DataFrame:
@@ -151,60 +169,6 @@ def passenger(
             print(f"{name} waited for {wait_queue_time:.2f} minutes")
 
 
-<<<<<<< Updated upstream
-def setup(
-    env: simpy.Environment,
-    num_servers: int,
-    arrival_rate: float,
-    waiting_times: list,
-    queue_lengths: list,
-    verbose: bool = False,
-    st_std: float = 0.25,
-    st_mean: float = 1.0,
-    passengers_passed: int = 3000,
-    init_passengers: int = 0,
-):
-    """Setting up the security lane simulation"""
-
-    # create security lane
-    security_lane = SecurityLane(
-        env, num_servers, st_std=st_std, st_mean=st_mean, n_customers=passengers_passed
-    )
-
-    # add passengers that are already in the queue
-    passenger_count = itertools.count()
-    for _ in range(init_passengers):
-        env.process(
-            passenger(
-                env,
-                f"Passenger {next(passenger_count)}",
-                queue_lengths,
-                security_lane,
-                waiting_times,
-                verbose=verbose,
-            )
-        )
-
-    # add more passengers while running
-    passed = 0
-    while passed < (passengers_passed - init_passengers):
-        yield env.timeout(np.random.exponential(1 / arrival_rate))
-        passenger_id = next(passenger_count)
-        env.process(
-            passenger(
-                env,
-                f"Passenger {passenger_id}",
-                queue_lengths,
-                security_lane,
-                waiting_times,
-                verbose=verbose,
-            )
-        )
-        passed += 1
-
-
-=======
->>>>>>> Stashed changes
 def run_simulation(
     arrival_rate: float,
     st_std: float = 0.25,
@@ -228,12 +192,9 @@ def run_simulation(
             queue_lengths=queue_lengths,
             waiting_times=waiting_times,
             verbose=verbose,
-<<<<<<< Updated upstream
-            passengers_passed=passengers_passed,
+            passengers_passed=n_customers,
             st_std=st_std,
             st_mean=st_mean,
-=======
->>>>>>> Stashed changes
             init_passengers=init_passengers,
         )
     )
@@ -241,7 +202,6 @@ def run_simulation(
         env.run(until=stop_time)
     else:
         env.run()
-    # print(f"ecco {busy_time}, { env.now}")
     return waiting_times, queue_lengths, security_lane.busy_time / env.now
 
 
@@ -318,37 +278,41 @@ def plot_waiting_times_cumavg(
     waiting_times_collector: list,
     reps_to_plot: int,
     warm_up: int = 0,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
     show: bool = False,
 ):
+    plt.figure(figsize=(10, 6), dpi=300)
     for r in range(reps_to_plot):
         cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
             1, len(waiting_times_collector[r]) + 1
         )
-        plt.plot(cumavg, alpha=0.5)
+        plt.plot(cumavg, alpha=0.45, linewidth=1)
 
     avg_per_customer = np.mean(waiting_times_collector, axis=0)
     cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
         1, len(avg_per_customer) + 1
     )
     plt.plot(
-        cumavg_per_customer, color="black", label="ensemble-averaged cumulative mean"
+        cumavg_per_customer,
+        color="black",
+        label="ensemble-averaged cumulative mean",
+        linewidth=2.2,
     )
-    if warm_up:
-        plt.axvline(x=warm_up, color="red", label="warm up", ls="--")
 
-    plt.xlabel("customer index")
-    plt.ylabel("cumulative average waiting time")
-    plt.grid(alpha=0.5)
-    plt.tight_layout()
-    plt.legend()
+    if warm_up:
+        plt.axvline(x=warm_up, color="red", label="warm up", ls="--", linewidth=1.6)
+
+    plt.xlabel("Customer Index", fontsize=12)
+    plt.ylabel("Cumulative Average Waiting Time (min)", fontsize=12)
+    plt.grid(alpha=0.35, linestyle="--")
+    plt.tight_layout(pad=2.0)
+    plt.legend(fontsize=10, loc="best")
+
+    if save_path:
+        plt.savefig(save_path + "plot_bello.png", dpi=300, bbox_inches="tight")
 
     if show:
         plt.show()
-
-    # save if path is there
-    if save_path:
-        plt.savefig(save_path, dpi=300)
     plt.close()
 
 
@@ -387,7 +351,9 @@ def std_sweep(
     plt.title("Effect of σ on Waiting Times (Part 2B)")
     plt.grid(alpha=0.5)
     plt.legend()
-    plt.tight_layout()
+    plt.tight_layout(pad=1.2)
+    plt.savefig("img/std_sweep.png", bbox_inches="tight")
+    plt.show()
 
     if save_path:
         plt.savefig(save_path, dpi=300)
@@ -395,31 +361,26 @@ def std_sweep(
 
 
 def plot_average_waiting_times(per_sim_means, scenario_name="Scenario", save_path=""):
-    plt.figure(figsize=(8, 5), dpi=300)
+    plt.figure()
+
     plt.hist(per_sim_means, bins=15, alpha=0.6, density=True, label="Simulation means")
 
-    # Fit normal PDF
     mu = np.mean(per_sim_means)
     sigma = np.std(per_sim_means, ddof=1)
     x = np.linspace(min(per_sim_means), max(per_sim_means), 200)
     pdf = stats.norm.pdf(x, mu, sigma)
-    plt.plot(x, pdf, label=f"Normal fit (μ={mu:.2f}, σ={sigma:.2f})", linewidth=2)
+    plt.plot(x, pdf, label=f"Normal fit (μ={mu:.2f}, σ={sigma:.2f})")
 
-    plt.xlabel("Average waiting time per simulation (minutes)")
+    plt.xlabel("Average waiting time per simulation (min)")
     plt.ylabel("Density")
-    plt.title(f"Distribution of per-simulation mean waiting times\n{scenario_name}")
-    plt.grid(alpha=0.4)
+    plt.title(f"Distribution — {scenario_name}")
     plt.legend()
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300)
+    plt.tight_layout(pad=1.2)
+    plt.show()
     plt.close()
 
 
-def plot_queue_length_mean(
-    queue_lengths_collector, scenario_name="Scenario", save_path="str"
-):
-    # Interpolate all trajectories to a common time grid
+def plot_queue_length_mean(queue_lengths_collector, scenario_name="Scenario"):
     max_time = max(ql[-1][0] for ql in queue_lengths_collector)
     common_times = np.linspace(0, max_time, 500)
 
@@ -431,26 +392,24 @@ def plot_queue_length_mean(
 
     interpolated = np.array(interpolated)
     mean_curve = np.mean(interpolated, axis=0)
-    std_curve = np.std(interpolated, axis=0)
+    sem_curve = np.std(interpolated, axis=0, ddof=1) / np.sqrt(len(interpolated))
 
-    plt.figure(figsize=(10, 5), dpi=300)
-    plt.plot(common_times, mean_curve, label="Mean queue length", linewidth=2)
+    plt.figure()
+    plt.plot(common_times, mean_curve, label="Mean queue length")
     plt.fill_between(
         common_times,
-        mean_curve - std_curve,
-        mean_curve + std_curve,
-        alpha=0.3,
-        label="± 1 std dev",
+        mean_curve - 1.96 * sem_curve,
+        mean_curve + 1.96 * sem_curve,
+        alpha=0.25,
+        label="95% CI",
     )
 
     plt.xlabel("Time (minutes)")
     plt.ylabel("Mean Queue Length")
-    plt.title(f"Mean Queue Length Across Replications — {scenario_name}")
-    plt.grid(alpha=0.3)
+    plt.title(f"Mean Queue Length — {scenario_name}")
     plt.legend()
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300)
+    plt.tight_layout(pad=1.2)
+    plt.show()
     plt.close()
 
 
@@ -458,48 +417,567 @@ def plot_queue_length_single(queue_lengths, scenario_name="Scenario 1", save_pat
     times = [t for t, q in queue_lengths]
     lengths = [q for t, q in queue_lengths]
 
-    plt.figure(figsize=(10, 5), dpi=300)
-    plt.plot(times, lengths, linewidth=1.3)
-    plt.xlabel("Time (minutes)")
-    plt.ylabel("Queue Length")
-    plt.title(f"Queue Length Over Time — {scenario_name}")
-    plt.grid(alpha=0.4)
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300)
+    plt.figure(figsize=(12, 6), dpi=300)
+    plt.plot(times, lengths, linewidth=1.6)
+
+    plt.xlabel("Time (minutes)", fontsize=12)
+    plt.ylabel("Queue Length", fontsize=12)
+    plt.title(f"Queue Length Over Time — {scenario_name}", fontsize=14)
+    plt.grid(alpha=0.35, linestyle="--")
+    plt.tight_layout(pad=2.0)
+    plt.show()
     plt.close()
 
 
-def plot_queue_lengths_all(
-    queue_lengths_collector, scenario_name="Scenario", save_path=""
-):
-    plt.figure(figsize=(10, 5), dpi=300)
+def plot_queue_lengths_all(queue_lengths_collector, scenario_name="Scenario"):
+    plt.figure(figsize=(12, 6), dpi=300)
 
-    for i, ql in enumerate(queue_lengths_collector):
+    for ql in queue_lengths_collector:
         times = [t for t, q in ql]
         lengths = [q for t, q in ql]
-        plt.plot(times, lengths, alpha=0.25, linewidth=0.8)
+        plt.plot(times, lengths, alpha=0.2, linewidth=1)
 
-    plt.xlabel("Time (minutes)")
-    plt.ylabel("Queue Length")
-    plt.title(f"Queue Length Trajectories Across Replications — {scenario_name}")
-    plt.grid(alpha=0.4)
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300)
+    plt.xlabel("Time (minutes)", fontsize=12)
+    plt.ylabel("Queue Length", fontsize=12)
+    plt.title(
+        f"Queue Length Trajectories Across Replications — {scenario_name}", fontsize=14
+    )
+    plt.grid(alpha=0.35, linestyle="--")
+    plt.tight_layout(pad=2.0)
+    plt.show()
     plt.close()
+
+
+def plot_waiting_times_cumavg(
+    waiting_times_collector: list,
+    reps_to_plot: int,
+    warm_up: int = 0,
+    save_path: str = "assignment_2/img/",
+    show: bool = False,
+    colors=["black", "red", "purple"],
+):
+    plt.figure()
+
+    for r in range(reps_to_plot):
+        cumavg = np.cumsum(waiting_times_collector[r]) / np.arange(
+            1, len(waiting_times_collector[r]) + 1
+        )
+        plt.plot(cumavg, alpha=0.5, lw=0.5)
+
+    # Ensemble statistic
+    avg_per_customer = np.mean(waiting_times_collector, axis=0)
+    cumavg_per_customer = np.cumsum(avg_per_customer) / np.arange(
+        1, len(avg_per_customer) + 1
+    )
+    std_per_customer = np.std(waiting_times_collector, axis=0) / np.sqrt(
+        len(waiting_times_collector)
+    )
+    cumavg_std = np.cumsum(std_per_customer) / np.arange(1, len(std_per_customer) + 1)
+
+    plt.plot(
+        cumavg_per_customer, color="black", label="ensemble-averaged cumulative mean"
+    )
+    plt.fill_between(
+        np.arange(len(cumavg_per_customer)),
+        cumavg_per_customer - cumavg_std,
+        cumavg_per_customer + cumavg_std,
+        alpha=0.25,
+        color="gray",
+        label="95% confidence band",
+    )
+
+    if warm_up:
+        plt.axvline(x=warm_up, color="red", label="warm up", ls="--")
+
+    plt.xlabel("Customer index")
+    plt.ylabel("Cumulative average waiting time (min)")
+    plt.legend()
+    plt.tight_layout(pad=1.2)
+
+    if save_path:
+        plt.savefig(save_path + "miao.png", bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot_std_sweep2(
+    arrival_rate: float,
+    st_std_range: list[float],
+    num_servers: int,
+    n_steps: int = 1000,
+    n_customers: int = 3000,
+    num_replications: int = 40,
+    show: bool = False,
+    save_path: str = "assignment_2/img/",
+):
+    std_list = np.linspace(st_std_range[0], st_std_range[1], n_steps)
+    mean_collector = np.zeros_like(std_list)
+    ci_halfwidth_collector = np.zeros_like(std_list)
+
+    for idx, st_std in enumerate(std_list):
+        (
+            _,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+            _,
+            _,
+        ) = run_multiple_simulations(
+            arrival_rate=arrival_rate,
+            st_std=st_std,
+            verbose=False,
+            n_customers=n_customers,
+            num_servers=num_servers,
+            num_replications=num_replications,
+            warm_up=0,
+        )
+
+        # Store mean
+        mean_collector[idx] = mean_waiting_time
+
+        # 95% confidence interval for mean across replications
+        ci_halfwidth_collector[idx] = (
+            1.96 * std_waiting_time / np.sqrt(num_replications)
+        )
+
+    lower = mean_collector - ci_halfwidth_collector
+    upper = mean_collector + ci_halfwidth_collector
+
+    # Plot mean with CI band
+    plt.figure(figsize=(10, 6), dpi=300)
+    plt.plot(std_list, mean_collector, label="Mean waiting time")
+    plt.fill_between(
+        std_list, lower, upper, alpha=0.25, label="95% Confidence Interval"
+    )
+
+    plt.xlabel("Service time standard deviation σ")
+    plt.ylabel("Average waiting time (minutes)")
+    plt.title(f"Effect of σ on Waiting Times ({num_servers} Servers)")
+    plt.grid(alpha=0.35)
+    plt.legend()
+    plt.tight_layout(pad=1.2)
+
+    if save_path:
+        plt.savefig(save_path + "sweep_with_CI.png", dpi=300, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot3D_std_mean_sweep(
+    arrival_rate: float,
+    std_range: list[float],
+    mu_range: list[float],
+    num_servers: int,
+    passed_passengers: int = 3000,
+    num_replications: int = 40,
+    show: bool = False,
+    save_path: str = "assignment_2/img/",
+):
+
+    mean_wt_matrix = np.zeros((len(std_range), len(mu_range)))
+    for std_idx, std in enumerate(std_range):
+        for mu_idx, mu in enumerate(mu_range):
+            _, mean_waiting_time, _, _, _, _ = run_multiple_simulations(
+                arrival_rate=arrival_rate,
+                st_std=std,
+                st_mean=mu,
+                verbose=False,
+                passengers_passed=passed_passengers,
+                num_servers=num_servers,
+                num_replications=num_replications,
+                warm_up=0,
+            )
+            mean_wt_matrix[std_idx, mu_idx] = mean_waiting_time
+
+    fig = plt.figure(figsize=(12, 8), dpi=300)
+    ax = fig.add_subplot(111, projection="3d")
+    X, Y = np.meshgrid(mu_range, std_range)
+    surf = ax.plot_surface(
+        Y,
+        X,
+        mean_wt_matrix,
+        cmap="viridis",
+        edgecolor="k",
+        linewidth=0.25,
+        antialiased=True,
+    )
+
+    ax.set_xlabel("Service Time Std Dev (σ)", fontsize=11, labelpad=12)
+    ax.set_ylabel("Service Time Mean (μ)", fontsize=11, labelpad=12)
+    ax.set_zlabel("Mean Waiting Time (min)", fontsize=11, labelpad=10)
+    ax.set_title(
+        f"Mean Waiting Time Surface Plot ({num_servers} Servers)", fontsize=14, pad=15
+    )
+
+    fig.colorbar(surf, shrink=0.7, aspect=15, pad=0.1)
+    plt.tight_layout(pad=2.5)
+
+    if save_path:
+        plt.savefig(
+            save_path + "plot3D_std_mean_sweep.png", dpi=300, bbox_inches="tight"
+        )
+
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot_warm_up_sweep(utilization, service_time_mean, service_time_std, arrival_rate):
+
+    stats_collector = np.load("assignment_2/data/warm_up_sweep.npy")
+    warm_ups = stats_collector[:, 0]
+    means = stats_collector[:, 1]
+    stds = stats_collector[:, 2]
+
+    theoretical_wt = (
+        arrival_rate * (service_time_std**2 + service_time_mean**2)
+    ) / (2 * (1 - utilization))
+
+    fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300, constrained_layout=True)
+    axs.plot(warm_ups, means, label=r"$\bar{X}$", lw=1.5)
+    axs.fill_between(
+        warm_ups,
+        means - stds,
+        means + stds,
+        alpha=0.2,
+        label=r"$s$",
+    )
+    axs.hlines(
+        theoretical_wt,
+        xmin=warm_ups[0],
+        xmax=warm_ups[-1],
+        colors="red",
+        linestyles="--",
+        label=r"$\mu$",
+        lw=1,
+    )
+
+    # true value
+    axs.set_xlabel("Warm-up period (customers)")
+    axs.set_ylabel("Mean waiting time (minutes)")
+    axs.grid(alpha=0.5)
+    axs.set_title("Effect of warm-up period on waiting time estimates (R = 1000)")
+    axs.legend()
+    plt.tight_layout(pad=1.2)
+    plt.savefig("assignment_2/img/warm_up_sweep.png", dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+def run_Q2A(df):
+    utilization = 0.85
+    service_time_mean = 1
+    service_time_std = 0.25
+    arrival_rate = utilization / service_time_mean
+    warm_up = 500
+
+    theoretical_wt = (
+        arrival_rate * (service_time_std**2 + service_time_mean**2)
+    ) / (2 * (1 - utilization))
+
+    R = 40
+    (
+        passengers_passed,
+        mean_waiting_time,
+        std_waiting_time,
+        waiting_times_collector,
+        queue_lengths_collector,
+        utilizations_collector,
+    ) = run_multiple_simulations(
+        arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
+    )
+
+    print("------SECURITY LANE SIMULATION------")
+    print("------------Q2A  RESULTS------------")
+    print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
+    print(
+        f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n"
+        f"Standard deviation: {std_waiting_time:.2f} minutes"
+    )
+    print(f"Theoretical steady-state: {theoretical_wt:.3f}")
+    print(
+        "Not reject H0:",
+        check_validity(
+            mean_waiting_time, std_waiting_time, R, theoretical_wt, t_value=2.021
+        ),
+    )
+
+    plot_nservers_cumavg(
+        arrival_rate=arrival_rate,
+        num_servers_list=[1],
+        reps_to_plot=20,
+        warm_up=warm_up,
+        save_path="assignment_2/img/",
+        show=False,
+    )
+
+
+def run_Q2B(df, plot_std_sweep=False):
+    warm_up = 0
+    arrival_rate = get_arrival_rate(df, "September")
+    R = 40
+
+    (
+        passengers_passed,
+        mean_waiting_time,
+        std_waiting_time,
+        waiting_times_collector,
+        queue_lengths_collector,
+        utilizations_collector,
+    ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
+
+    per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
+
+    plot_average_waiting_times(per_sim_means, "Baseline")
+    plot_queue_length_single(queue_lengths_collector[0])
+    plot_queue_lengths_all(queue_lengths_collector, "Baseline")
+    plot_queue_length_mean(queue_lengths_collector, "Baseline")
+
+    print("------Q2B RESULTS: CURRENT OPS------")
+    print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
+    print(f"Mean waiting: {mean_waiting_time:.2f} min")
+    print(f"Std waiting:  {std_waiting_time:.2f} min")
+
+    # Add servers
+    run_multiple_simulations(arrival_rate, num_servers=2, passengers_passed=3500)
+
+    plot_nservers_cumavg(
+        num_servers_list=[1, 2, 3],
+        arrival_rate=arrival_rate,
+        passed_passengers=3000,
+        save_path="assignment_2/img/",
+        show=False,
+        num_replications=R,
+        colors=["blue", "orange", "green"],
+    )
+
+    if plot_std_sweep:
+        std_values = np.linspace(0.05, 1.0, 100)
+        std_sweep(arrival_rate, std_values)
+
+
+def run_3D_sweep(df):
+    arrival_rate = get_arrival_rate(df, "September")
+    num_servers = 3
+
+    max_rho = 1.1
+    max_mu = max_rho / arrival_rate * num_servers
+    min_mu = 0.5 * max_mu
+    max_std = 0.8 * max_mu
+    min_std = 0.2 * min_mu
+
+    mu_range = np.linspace(min_mu, max_mu, 10)
+    std_range = np.linspace(min_std, max_std, 10)
+
+    print(f"mu range: {mu_range}")
+    print(f"std range: {std_range}")
+    print(f"arrival rate: {arrival_rate}")
+
+    plot3D_std_mean_sweep(
+        arrival_rate,
+        std_range,
+        mu_range,
+        num_servers,
+        passed_passengers=3000,
+        num_replications=40,
+        save_path="assignment_2/img/",
+        show=False,
+    )
+
+
+def run_2D_std_sweep(df):
+    """Runs the 2D sweep of waiting time vs service-time std dev."""
+    arrival_rate = get_arrival_rate(df, "September")
+    servers_to_test = [4, 5]
+    R = 40
+
+    print("------ 2D STD SWEEP ------")
+    print(f"Arrival rate: {arrival_rate}")
+
+    for n in servers_to_test:
+        print(f"Running STD sweep for {n} servers...")
+        plot_std_sweep2(
+            arrival_rate=arrival_rate,
+            st_std_range=[0.01, 1],
+            num_servers=n,
+            n_steps=300,  # keep lightweight unless needed
+            passed_passengers=3000,
+            num_replications=R,
+            save_path=f"assignment_2/img/sweep_{n}_servers.png",
+            show=False,
+        )
+
+    print("STD sweep complete. Plots saved to /img/")
+
+
+def plot_hourly_arrivals():
+    arrival_rates = np.array(
+        [
+            0.5,
+            0.4,
+            0.3,
+            0.2,
+            0.4,
+            0.8,
+            1.2,
+            1.8,
+            2.5,
+            3.1,
+            2.0,
+            1.7,
+            1.1,
+            1.9,
+            2.1,
+            2.8,
+            2.2,
+            3.3,
+            2.5,
+            2.4,
+            2.0,
+            2.1,
+            0.7,
+            0.3,
+        ]
+    )
+    R = 40
+    max_passengers = 1000
+    queue_lengths_collector = [
+        np.zeros((max_passengers, 2), dtype=int) for _ in range(R)
+    ]
+    ql_for_plot = []
+    wt_for_plot = []
+    for arrival_rate in tqdm(arrival_rates):
+        passing_ql = [ql[-1, 1] for ql in queue_lengths_collector]
+
+        (
+            passengers_passed,
+            mean_waiting_time,
+            std_waiting_time,
+            waiting_times_collector,
+            queue_lengths_collector,
+            utilizations_collector,
+        ) = run_multiple_simulations(
+            arrival_rate=arrival_rate,
+            num_replications=R,
+            passengers_passed=max_passengers,
+            init_passengers=passing_ql,
+            verbose=False,
+            stop_time=480,
+            num_servers=2,
+        )
+        mean_ql = np.mean([ql[-1, 1] for ql in queue_lengths_collector])
+        ql_for_plot.append(mean_ql)
+        wt_for_plot.append(mean_waiting_time)
+
+    fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300, constrained_layout=True)
+    axs2 = axs.twinx()
+    axs3 = axs.twinx()
+    hours = np.arange(0, 24)
+
+    # plot queue length
+    axs.plot(
+        hours,
+        ql_for_plot,
+        color="darkred",
+        marker="s",
+        label="Mean queue length",
+        lw=1.5,
+        ms=3,
+    )
+    axs.set_xlabel("Hour of the day")
+    axs.set_ylabel("Mean queue length [passengers]", color="darkred")
+    axs.set_zorder(2)
+    axs.patch.set_alpha(0)
+
+    # waiting time
+    axs2.plot(
+        hours,
+        wt_for_plot,
+        color="darkgreen",
+        marker="o",
+        label="Mean waiting time",
+        lw=1.5,
+        ms=3,
+    )
+    axs2.set_ylabel("Mean waiting time [minutes]", color="darkgreen")
+    axs2.set_zorder(2)
+    axs2.patch.set_alpha(0)
+
+    # arrival rate
+    bars = axs3.bar(hours, arrival_rates, width=0.8, alpha=0.6, label=r"$\lambda$")
+    for bar in bars:
+        height = bar.get_height()
+        axs3.text(
+            bar.get_x() + bar.get_width() / 2,  # x-position
+            height + 0.05,  # y-position (middle of bar)
+            f"{height:.1f}",  # text
+            ha="center",
+            va="center",
+            color="darkblue",
+            fontsize=6,
+            alpha=0.6,
+        )
+    axs3.set_zorder(0)
+    axs3.patch.set_visible(False)
+    # Move axis 3 further right so it doesn't overlap axis 2
+    axs3.spines["right"].set_position(("axes", 1.15))
+
+    # Hide axis 3 visually
+    axs3.spines["right"].set_visible(False)
+    axs3.yaxis.set_visible(False)
+
+    axs.set_xticks(hours)
+    axs.set_xticklabels(
+        [
+            "00:00",
+            "01:00",
+            "02:00",
+            "03:00",
+            "04:00",
+            "05:00",
+            "06:00",
+            "07:00",
+            "08:00",
+            "09:00",
+            "10:00",
+            "11:00",
+            "12:00",
+            "13:00",
+            "14:00",
+            "15:00",
+            "16:00",
+            "17:00",
+            "18:00",
+            "19:00",
+            "20:00",
+            "21:00",
+            "22:00",
+            "23:00",
+        ]
+    )
+    axs.tick_params(axis="x", rotation=45, labelsize=8)
+
+    plt.suptitle("Hourly Arrival Rate and Mean Waiting Time (2 Servers)")
+    plt.tight_layout(pad=1.2)
+    plt.savefig(
+        "assignment_2/img/arrival_rate_vs_waiting_time.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.show()
 
 
 def plot_nservers_cumavg(
     arrival_rate: float,
     num_servers_list: list[int] = [1],
     st_std: float = 0.25,
-    n_customers: int = 3000,
+    passed_passengers: int = 3000,
     num_replications: int = 40,
     reps_to_plot: int = 0,
     warm_up: int = 0,
     show: bool = False,
-    save_path: str = "",
+    save_path: str = "assignment_2/img/",
     colors=["black", "red", "purple"],
 ):
     for idx in range(len(num_servers_list)):
@@ -508,7 +986,7 @@ def plot_nservers_cumavg(
                 arrival_rate=arrival_rate,
                 st_std=st_std,
                 verbose=False,
-                n_customers=n_customers,
+                passengers_passed=passed_passengers,
                 num_servers=num_servers_list[idx],
                 num_replications=num_replications,
                 warm_up=0,
@@ -541,7 +1019,7 @@ def plot_nservers_cumavg(
     plt.ylabel("cumulative average waiting time")
     plt.title("ensemble-averaged cumulative mean")
     plt.grid(alpha=0.5)
-    plt.tight_layout()
+    plt.tight_layout(pad=1.2)
     plt.legend()
 
     if show:
@@ -549,717 +1027,67 @@ def plot_nservers_cumavg(
 
     # save if path is there
     if save_path:
-        plt.savefig(save_path, dpi=300)
+        plt.savefig(save_path + "image_cumvag.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 
-def plot_std_sweep2(
-    arrival_rate: float,
-    st_std_range: list[float],
-    num_servers: int,
-    n_steps: int = 1000,
-    n_customers: int = 3000,
-    num_replications: int = 40,
-    show: bool = False,
-    save_path: str = "",
-):
-    std_list = np.linspace(st_std_range[0], st_std_range[1], n_steps)
-    average_wt_collector = np.zeros_like(std_list)
+def save_warm_up(path: str, arrival_rate: float):
 
-    for idx in range(len(std_list)):
-        _, mean_waiting_time, _, _, _, _ = run_multiple_simulations(
-            arrival_rate=arrival_rate,
-            st_std=std_list[idx],
-            verbose=False,
-            n_customers=n_customers,
-            num_servers=num_servers,
-            num_replications=num_replications,
-            warm_up=0,
-        )
-        average_wt_collector[idx] = mean_waiting_time
+    warm_ups = range(0, 1001, 100)
+    R = 40
 
-    plt.plot(std_list, average_wt_collector)
-
-    plt.xlabel("standard deviation")
-    plt.ylabel("average waiting time")
-    plt.title(f"waiting time of system with {num_servers} servers")
-    plt.grid(alpha=0.5)
-    plt.tight_layout()
-    plt.legend()
-
-    if show:
-        plt.show()
-
-    # save if path is there
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-    plt.close()
-
-
-def plot3D_std_mean_sweep(
-    arrival_rate: float,
-    std_range: list[float],
-    mu_range: list[float],
-    num_servers: int,
-    passed_passengers: int = 3000,
-    num_replications: int = 40,
-    show: bool = False,
-    save_path: str = "",
-):
-
-    # create matrix of mean waiting times
-    mean_wt_matrix = np.zeros((len(std_range), len(mu_range)))
-    for std_idx, std in enumerate(std_range):
-        for mu_idx, mu in enumerate(mu_range):
-            _, mean_waiting_time, _, _, _ = run_multiple_simulations(
-                arrival_rate=arrival_rate,
-                st_std=std,
-                st_mean=mu,
-                verbose=False,
-                passengers_passed=passed_passengers,
-                num_servers=num_servers,
-                num_replications=num_replications,
-                warm_up=0,
-            )
-            mean_wt_matrix[std_idx, mu_idx] = mean_waiting_time
-
-    fig = plt.figure(figsize=(10, 7), dpi=300)
-    ax = fig.add_subplot(111, projection="3d")
-    X, Y = np.meshgrid(mu_range, std_range)
-    ax.plot_surface(Y, X, mean_wt_matrix, cmap="viridis")
-    ax.set_ylabel("Service Time Mean (μ)")
-    ax.set_xlabel("Service Time Std Dev (σ)")
-    ax.set_zlabel("Mean Waiting Time (minutes)")
-    ax.set_title(f"Mean Waiting Time Surface Plot ({num_servers} Servers)")
-    plt.tight_layout()
-    if show:
-        plt.show()
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-    plt.close()
-
-
-if __name__ == "__main__":
-
-    df = load_data("airport.csv")
-    Q2A = False
-<<<<<<< Updated upstream
-    WARM_UP_SWEEP = False
-    PLOT_WARM_UP_SWEEP = False
-    Q2B = False
-    HOURLY_ARRIVALS = False
-=======
-    Q2B = False
-    WARM_UP_SWEEP = False
-    PLOT_WARM_UP_SWEEP = False
-    HOURLY_ARRIVALS = True
->>>>>>> Stashed changes
-    PLOT_STD_SWEEP = False
-    PLOT_3D_MEAN_STD_SWEEP = True
-
-    if Q2A:
-        utilization = 0.85
-        service_time_mean = 1
-        service_time_std = 0.25
-        arrival_rate = utilization / service_time_mean
-
-        # TODO we can decide a better warm-up period,
-        warm_up = 1000
-
-        # theoretical waiting time:
-        theoretical_wt = (
-            arrival_rate * (service_time_std**2 + service_time_mean**2)
-        ) / (2 * (1 - utilization))
-
-        # R replications
-        R = 40
-        (
-            passengers_passed,
-            mean_waiting_time,
-            std_waiting_time,
-            waiting_times_collector,
-            queue_lengths_collector,
-            utilizations_collector,
-        ) = run_multiple_simulations(
+    stats_collector = []
+    for warm_up in warm_ups:
+        print(f"Running warm-up period: {warm_up}")
+        _, mean, std, _, _, _ = run_multiple_simulations(
             arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
         )
 
-        # hypothesis test
-        alpha = 0.05
-        t_value = stats.t.ppf(1 - alpha / 2, R - 1)
-        validity_wt = check_validity(
-            np.mean(waiting_times_collector, axis=1),
-            theoretical_value=theoretical_wt,
-            t_value=t_value,
-        )
+        stats_collector.append((warm_up, mean, std))
 
-        validity_util = check_validity(
-            utilizations_collector,
-            theoretical_value=utilization,
-            t_value=t_value,
-        )
+    stats_collector = np.array(stats_collector)
+    np.save(path, stats_collector)
 
-        print("------SECURITY LANE SIMULATION------")
-        print("------------Q2A  RESULTS------------")
 
-        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-        print(
-            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
-            f"Standard deviation of waiting time: {std_waiting_time} minutes",
-        )
-        print(f"theoretical steady-state solution: {theoretical_wt}")
-        print(f"Not reject H0: {validity_wt}")
+def main():
+    df = load_data("airport.csv")
+    Q2A = False
+    WARM_UP_SWEEP = False
+    Q2B = False
+    HOURLY_ARRIVALS = True
+    PLOT_STD_SWEEP = False
+    PLOT_3D_MEAN_STD_SWEEP = False
 
-        print(f"average utilization: {np.mean(utilizations_collector) }")
-        print(f"target utilization: {utilization}")
-        print(f"Not reject H0: {validity_util}")
+    if Q2A:
+        run_Q2A(df)
 
-        plot_nservers_cumavg(
-            arrival_rate=arrival_rate,
-            num_servers_list=[1],
-            reps_to_plot=20,
-            warm_up=warm_up,
-            save_path="img/cumavg_2A.png",
-        )
-
-<<<<<<< Updated upstream
-=======
-    if WARM_UP_SWEEP:
-        utilization = 0.85
-        service_time_mean = 1
-        service_time_std = 0.25
-        arrival_rate = utilization / service_time_mean
-
-        warm_ups = range(0, 1001, 10)
-        R = 1000
-
-        alpha = 0.05
-        t_value = stats.t.ppf(1 - alpha / 2, R - 1)
-
-        stats_collector = []
-        for warm_up in warm_ups:
-            print(f"Running warm-up period: {warm_up}")
-            _, mean, std, _, _, _ = run_multiple_simulations(
-                arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
-            )
-            confidence_interval = t_value * std / np.sqrt(R)
-            stats_collector.append((warm_up, mean, confidence_interval))
-
-        stats_collector = np.array(stats_collector)
-        np.save("data/warm_up_sweep.npy", stats_collector)
-
-    if PLOT_WARM_UP_SWEEP:
-
-        stats_collector = np.load("data/warm_up_sweep.npy")
-        warm_ups = stats_collector[:, 0]
-        means = stats_collector[:, 1]
-        CIs = stats_collector[:, 2]
-
-        utilization = 0.85
-        service_time_mean = 1
-        service_time_std = 0.25
-        arrival_rate = utilization / service_time_mean
-
-        theoretical_wt = (
-            arrival_rate * (service_time_std**2 + service_time_mean**2)
-        ) / (2 * (1 - utilization))
-
-        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
-        axs.plot(warm_ups, means, label=r"$\bar{X}$", lw=1.5)
-        axs.fill_between(
-            warm_ups,
-            means - CIs,
-            means + CIs,
-            alpha=0.2,
-            label=r"$CI$",
-        )
-        axs.hlines(
-            theoretical_wt,
-            xmin=warm_ups[0],
-            xmax=warm_ups[-1],
-            colors="red",
-            linestyles="--",
-            label=r"$\mu$",
-            lw=1,
-        )
-
-        # true value
-        axs.set_xlabel("Warm-up period (customers)")
-        axs.set_ylabel("Mean waiting time (minutes)")
-        axs.grid(alpha=0.5)
-        axs.set_title("Effect of warm-up period on waiting time estimates (R = 1000)")
-        axs.legend()
-        plt.tight_layout()
-        plt.savefig("img/warm_up_sweep.png", dpi=300)
-        plt.show()
-
->>>>>>> Stashed changes
     if Q2B:
-        warm_up = 0
-        arrival_rate = get_arrival_rate(df, "September")
-        print(f"arrival rate: {arrival_rate}")
-        R = 40
+        run_Q2B(df)
 
-        print("------SECURITY LANE SIMULATION------")
-        print("------------Q2B  RESULTS------------")
+    if PLOT_STD_SWEEP:
+        run_2D_std_sweep(df)
 
-        # CURRENT OPERATIONS
-        print("---------CURRENT OPERATIONS---------")
-        (
-            passengers_passed,
-            mean_waiting_time,
-            std_waiting_time,
-            waiting_times_collector,
-            queue_lengths_collector,
-            utilizations_collector,
-        ) = run_multiple_simulations(arrival_rate=arrival_rate, num_replications=R)
-
-        per_sim_means = np.array([np.mean(ws) for ws in waiting_times_collector])
-        per_sim_length = np.array([np.mean(lgt) for lgt in queue_lengths_collector])
-
-        # Waiting time distribution for baseline run
-        plot_average_waiting_times(
-            per_sim_means, scenario_name="Baseline", save_path="img/distrib_wt.png"
-        )
-
-        # Queue length plot
-        plot_queue_length_single(
-            queue_lengths_collector[0], save_path="img/ql_single.png"
-        )
-        plot_queue_lengths_all(
-            queue_lengths_collector, "Baseline", save_path="img/ql_all.png"
-        )
-        plot_queue_length_mean(
-            queue_lengths_collector, "Baseline", save_path="img/ql_mean.png"
-        )
-
-        print("------SECURITY LANE SIMULATION------")
-        print("------------Q2B  RESULTS------------")
-        print("---------CURRENT OPERATIONS---------")
-
-        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-        print(
-            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
-            f"Standard deviation of waiting time: {std_waiting_time} minutes",
-        )
-
-        # ADD MORE SERVERS
-        print("------------ADD  SERVERS------------")
-
-        (
-            passengers_passed,
-            mean_waiting_time,
-            std_waiting_time,
-            waiting_times_collector,
-            queue_lengths_collector,
-            utilizations_collector,
-        ) = run_multiple_simulations(
-            arrival_rate=arrival_rate,
-            num_replications=R,
-            num_servers=2,
-            n_customers=3500,
-        )
-
-        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-        print(
-            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
-            f"Standard deviation of waiting time: {std_waiting_time} minutes",
-        )
-
-        plot_nservers_cumavg(
-            num_servers_list=[1, 2, 3],
-            arrival_rate=arrival_rate,
-            n_customers=3000,
-            save_path="img/cumavg_123.png",
-            num_replications=R,
-            colors=["blue", "orange", "green"],
-        )
-
-        plot_nservers_cumavg(
-            num_servers_list=[4, 5],
-            arrival_rate=arrival_rate,
-            n_customers=3000,
-            save_path="img/cumavg_45.png",
-            num_replications=R,
-            reps_to_plot=20,
-            colors=["navy", "darkmagenta"],
-        )
-
-        #  REDUCE VARIANCE
-        print("--------REDUCED  VARIABILITY--------")
-
-        (
-            passengers_passed,
-            mean_waiting_time,
-            std_waiting_time,
-            waiting_times_collector,
-            queue_lengths_collector,
-            utilizations_collector,
-        ) = run_multiple_simulations(
-            arrival_rate=arrival_rate, st_std=0.1, num_replications=R
-        )
-
-        print(f"Mean passengers passed: {np.mean(passengers_passed):.0f}")
-        print(
-            f"Mean waiting time: {mean_waiting_time:.2f} minutes,\n",
-            f"Standard deviation of waiting time: {std_waiting_time} minutes",
-        )
-
-        if PLOT_STD_SWEEP:
-            std_values = np.linspace(0.05, 1.0, 100)
-            std_sweep(arrival_rate, std_values, "img/std_sweep.png")
-
-            plot_std_sweep2(
-                arrival_rate=arrival_rate,
-                st_std_range=[0.01, 0.3],
-                num_servers=4,
-                n_steps=1000,
-                n_customers=3000,
-                save_path="img/sweep_4_servers.png",
-            )
-
-            plot_std_sweep2(
-                arrival_rate=arrival_rate,
-                st_std_range=[0.01, 0.3],
-                num_servers=5,
-                n_steps=1000,
-                n_customers=3000,
-                save_path="img/sweep_5_servers.png",
-            )
-
-    # Investigate warm-up period
     if WARM_UP_SWEEP:
+        path = "assignment_2/data/warm_up_sweep.npy"
         utilization = 0.85
         service_time_mean = 1
         service_time_std = 0.25
         arrival_rate = utilization / service_time_mean
 
-        warm_ups = range(0, 1001, 10)
-        R = 1000
+        save_warm_up(path, arrival_rate)
 
-        stats_collector = []
-        for warm_up in warm_ups:
-            print(f"Running warm-up period: {warm_up}")
-            _, mean, std, _, _, _ = run_multiple_simulations(
-                arrival_rate=arrival_rate, num_replications=R, warm_up=warm_up
-            )
-
-            stats_collector.append((warm_up, mean, std))
-
-        stats_collector = np.array(stats_collector)
-        np.save("assignment_2/data/warm_up_sweep.npy", stats_collector)
-
-    if PLOT_WARM_UP_SWEEP:
-
-        stats_collector = np.load("assignment_2/data/warm_up_sweep.npy")
-        warm_ups = stats_collector[:, 0]
-        means = stats_collector[:, 1]
-        stds = stats_collector[:, 2]
-
-        utilization = 0.85
-        service_time_mean = 1
-        service_time_std = 0.25
-        arrival_rate = utilization / service_time_mean
-
-        theoretical_wt = (
-            arrival_rate * (service_time_std**2 + service_time_mean**2)
-        ) / (2 * (1 - utilization))
-
-        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
-        axs.plot(warm_ups, means, label=r"$\bar{X}$", lw=1.5)
-        axs.fill_between(
-            warm_ups,
-            means - stds,
-            means + stds,
-            alpha=0.2,
-            label=r"$s$",
+        plot_warm_up_sweep(
+            utilization, service_time_mean, service_time_std, arrival_rate
         )
-        axs.hlines(
-            theoretical_wt,
-            xmin=warm_ups[0],
-            xmax=warm_ups[-1],
-            colors="red",
-            linestyles="--",
-            label=r"$\mu$",
-            lw=1,
-        )
-
-        # true value
-        axs.set_xlabel("Warm-up period (customers)")
-        axs.set_ylabel("Mean waiting time (minutes)")
-        axs.grid(alpha=0.5)
-        axs.set_title("Effect of warm-up period on waiting time estimates (R = 1000)")
-        axs.legend()
-        plt.tight_layout()
-        plt.savefig("assignment_2/img/warm_up_sweep.png", dpi=300)
-        plt.show()
 
     # Varying arrival rates over the day
     if HOURLY_ARRIVALS:
-        arrival_rates = np.array(
-            [
-                0.5,
-                0.4,
-                0.3,
-                0.2,
-                0.4,
-                0.8,
-                1.2,
-                1.8,
-                2.5,
-                3.1,
-                2.0,
-                1.7,
-                1.1,
-                1.9,
-                2.1,
-                2.8,
-                2.2,
-                3.3,
-                2.5,
-                2.4,
-                2.0,
-                2.1,
-                0.7,
-                0.3,
-            ]
-        )
-        R = 40
-        max_passengers = 1000
-        queue_lengths_collector = [
-            np.zeros((max_passengers, 2), dtype=int) for _ in range(R)
-        ]
-
-        ql_for_plot = []
-        wt_for_plot = []
-        util_for_plot = []
-
-        for arrival_rate in tqdm(arrival_rates):
-
-            passing_ql = [ql[-1, 1] for ql in queue_lengths_collector]
-
-            (
-                passengers_passed,
-                mean_waiting_time,
-                std_waiting_time,
-                waiting_times_collector,
-                queue_lengths_collector,
-                utilizations_collector,
-            ) = run_multiple_simulations(
-                arrival_rate=arrival_rate,
-                num_replications=R,
-                n_customers=max_passengers,
-                init_passengers=passing_ql,
-                verbose=False,
-                stop_time=480,
-                num_servers=2,
-            )
-            mean_ql = np.mean([ql[-1, 1] for ql in queue_lengths_collector])
-            ql_for_plot.append(mean_ql)
-            wt_for_plot.append(mean_waiting_time)
-            util_for_plot.append(np.mean(utilizations_collector))
-
-        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
-        axs2 = axs.twinx()
-        axs3 = axs.twinx()
-        hours = np.arange(0, 24)
-
-        # plot queue length
-        axs.plot(
-            hours,
-            ql_for_plot,
-            color="darkred",
-            marker="s",
-            label="Mean queue length",
-            lw=1.5,
-            ms=3,
-        )
-        axs.set_xlabel("Hour of the day")
-        axs.set_ylabel("Mean queue length [passengers]", color="darkred")
-        axs.set_zorder(2)
-        axs.patch.set_alpha(0)
-
-        # waiting time
-        axs2.plot(
-            hours,
-            wt_for_plot,
-            color="darkgreen",
-            marker="o",
-            label="Mean waiting time",
-            lw=1.5,
-            ms=3,
-        )
-        axs2.set_ylabel("Mean waiting time [minutes]", color="darkgreen")
-        axs2.set_zorder(2)
-        axs2.patch.set_alpha(0)
-
-        # arrival rate
-        bars = axs3.bar(hours, arrival_rates, width=0.8, alpha=0.6, label=r"$\lambda$")
-        for bar in bars:
-            height = bar.get_height()
-            axs3.text(
-                bar.get_x() + bar.get_width() / 2,  # x-position
-                height + 0.05,  # y-position (middle of bar)
-                f"{height:.1f}",  # text
-                ha="center",
-                va="center",
-                color="darkblue",
-                fontsize=6,
-                alpha=0.6,
-            )
-        axs3.set_zorder(0)
-        axs3.patch.set_visible(False)
-        # Move axis 3 further right so it doesn't overlap axis 2
-        axs3.spines["right"].set_position(("axes", 1.15))
-
-        # Hide axis 3 visually
-        axs3.spines["right"].set_visible(False)
-        axs3.yaxis.set_visible(False)
-
-        axs.set_xticks(hours)
-        axs.set_xticklabels(
-            [
-                "00:00",
-                "01:00",
-                "02:00",
-                "03:00",
-                "04:00",
-                "05:00",
-                "06:00",
-                "07:00",
-                "08:00",
-                "09:00",
-                "10:00",
-                "11:00",
-                "12:00",
-                "13:00",
-                "14:00",
-                "15:00",
-                "16:00",
-                "17:00",
-                "18:00",
-                "19:00",
-                "20:00",
-                "21:00",
-                "22:00",
-                "23:00",
-            ]
-        )
-        axs.tick_params(axis="x", rotation=45, labelsize=8)
-
-        plt.suptitle("Hourly Arrival Rate and Mean Waiting Time (2 Servers)")
-        plt.tight_layout()
-<<<<<<< Updated upstream
-        plt.savefig("assignment_2/img/arrival_rate_vs_waiting_time.png", dpi=300)
-        plt.show()
+        plot_hourly_arrivals()
 
     # 3D plot of mean waiting time vs std and mean of service time
     if PLOT_3D_MEAN_STD_SWEEP:
+        run_3D_sweep(df)
 
-        arrival_rate = get_arrival_rate(df, "September")
-        num_servers = 3
-        # generate mu and std ranges but rho must be < 1
-        max_rho = 1.1
-        max_mu = max_rho / arrival_rate * num_servers
-        min_mu = max_mu * 0.5
-        max_std = max_mu * 0.8
-        min_std = min_mu * 0.2
-        mu_range = np.linspace(min_mu, max_mu, 10)
-        std_range = np.linspace(min_std, max_std, 10)
 
-        print(f"mu range: {mu_range}")
-        print(f"std range: {std_range}")
-        print(f"arrival rate: {arrival_rate}")
-
-        plot3D_std_mean_sweep(
-            arrival_rate=arrival_rate,
-            std_range=std_range,
-            mu_range=mu_range,
-            num_servers=num_servers,
-            passed_passengers=3000,
-            num_replications=40,
-            show=True,
-        )
-=======
-        plt.savefig("img/arrival_rate_vs_waiting_time.png", dpi=300)
-        plt.close()
-
-        fig, axs = plt.subplots(1, 1, figsize=(8, 5), dpi=300)
-        axs3 = axs.twinx()
-
-        hours = np.arange(0, 24)
-
-        # plot utilization
-        axs.plot(
-            hours,
-            util_for_plot,
-            color="darkred",
-            marker="s",
-            label="Mean utilization",
-            lw=1.5,
-            ms=3,
-        )
-        axs.set_xlabel("Hour of the day")
-        axs.set_ylabel("Mean utilization", color="darkred")
-        axs.set_zorder(2)
-        axs.patch.set_alpha(0)
-
-        # arrival rate
-        bars = axs3.bar(hours, arrival_rates, width=0.8, alpha=0.6, label=r"$\lambda$")
-        for bar in bars:
-            height = bar.get_height()
-            axs3.text(
-                bar.get_x() + bar.get_width() / 2,  # x-position
-                height + 0.05,  # y-position (middle of bar)
-                f"{height:.1f}",  # text
-                ha="center",
-                va="center",
-                color="darkblue",
-                fontsize=6,
-                alpha=0.6,
-            )
-        axs3.set_zorder(0)
-        axs3.patch.set_visible(False)
-        # Move axis 3 further right so it doesn't overlap axis 2
-        axs3.spines["right"].set_position(("axes", 1.15))
-
-        # Hide axis 3 visually
-        axs3.spines["right"].set_visible(False)
-        axs3.yaxis.set_visible(False)
-
-        axs.set_xticks(hours)
-        axs.set_xticklabels(
-            [
-                "00:00",
-                "01:00",
-                "02:00",
-                "03:00",
-                "04:00",
-                "05:00",
-                "06:00",
-                "07:00",
-                "08:00",
-                "09:00",
-                "10:00",
-                "11:00",
-                "12:00",
-                "13:00",
-                "14:00",
-                "15:00",
-                "16:00",
-                "17:00",
-                "18:00",
-                "19:00",
-                "20:00",
-                "21:00",
-                "22:00",
-                "23:00",
-            ]
-        )
-        axs.tick_params(axis="x", rotation=45, labelsize=8)
-
-        plt.suptitle("Hourly Arrival Rate and Mean Utilization (2 Servers)")
-        plt.tight_layout()
-        plt.savefig("img/arrival_rate_vs_utilization.png", dpi=300)
-        plt.close()
->>>>>>> Stashed changes
+if __name__ == "__main__":
+    main()
