@@ -549,7 +549,6 @@ def plot3D_std_mean_sweep(
                 st_mean=mu,
                 verbose=False,
                 n_customers=n_customers,
-                n_customers=n_customers,
                 num_servers=num_servers,
                 num_replications=num_replications,
                 warm_up=0,
@@ -728,9 +727,11 @@ def run_Q2B(df, plot_std_sweep=False):
     print(
         f"Option B:   | {wt_s01:.2f}                 | {wt_std_s01:.2f}                  |{test_option_B}"
     )
+    print("-------HYPOTHESIS TESTING RESULTS-------")
+    print(f"Option A (2 servers) rejects H0: {test_option_A} at α={alpha:.2f}")
+    print(f"Option B (σ=0.1) rejects H0: {test_option_B} at α={alpha:.2f}")
 
-    # Add servers
-    plot_nservers_cumavg(
+    """   plot_nservers_cumavg(
         num_servers_list=[1, 2, 3],
         arrival_rate=arrival_rate,
         n_customers=3000,
@@ -738,9 +739,19 @@ def run_Q2B(df, plot_std_sweep=False):
         show=False,
         num_replications=R,
         colors=["blue", "orange", "green"],
+    ) """
+
+    plot_nservers_cumavg(
+        num_servers_list=[4, 5],
+        arrival_rate=arrival_rate,
+        n_customers=3000,
+        save_path="assignment_2/img/",
+        show=False,
+        num_replications=R,
+        colors=["purple", "teal"],
     )
 
-    plot_waiting_times_cumavg(
+    """ plot_waiting_times_cumavg(
         waiting_times_collector,
         reps_to_plot=20,
         warm_up=0,
@@ -756,7 +767,7 @@ def run_Q2B(df, plot_std_sweep=False):
         n_steps=100,
         num_replications=40,
         save_path="assignment_2/img/CI_sweep.png",
-    )
+    ) """
 
     if plot_std_sweep:
         std_values = np.linspace(0.05, 1.0, 100)
@@ -1057,13 +1068,13 @@ def save_warm_up(path: str, arrival_rate: float):
 
 def main():
     df = load_data("airport.csv")
-    Q1 = True
+    Q1 = False
     Q2A = False
     WARM_UP_SWEEP = False
-    Q2B = False
+    Q2B = True
     HOURLY_ARRIVALS = False
     PLOT_STD_SWEEP = False
-    PLOT_3D_MEAN_STD_SWEEP = True
+    PLOT_3D_MEAN_STD_SWEEP = False
 
     if Q1:
         print(
