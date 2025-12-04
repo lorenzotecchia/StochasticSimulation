@@ -1,0 +1,9 @@
+pybind11
+numpy
+matplotlib
+pandas
+jupyter 
+numba 
+scipy 
+tqdm
+

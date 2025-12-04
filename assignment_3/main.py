@@ -21,7 +21,7 @@ def chain_bond_energy(r: np.ndarray) -> float:
     return harmonic_bond_potential(r) + lennard_jones_potential(r)
 
 
-def harmonic_bond_potential(r: np.ndrarray, d0: float, k: float) -> float:
+def harmonic_bond_potential(r: np.ndarray, d0: float, k: float) -> float:
     """Comutes the harmonic bond potential between two beads.
     where d is the distance between the two beads, d0 is the equilibrium bond length,
     and k is the bond spring constant.
