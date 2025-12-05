@@ -28,4 +28,5 @@ if(APPLE)
         VERSION ""
         SOVERSION ""
     )
+		target_link_libraries(polymer_engine PRIVATE ${Python_LIBRARIES})
 endif()
