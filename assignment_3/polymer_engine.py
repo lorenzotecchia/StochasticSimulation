@@ -134,15 +134,15 @@ def _lj_kernel(
     sig6 = sigma**6
     sig12 = sig6 * sig6
     cutoff2 = cutoff * cutoff
-    start_offset = 2 if skip_bonded != 0 else 1
-    for i in range(n):
+    start_offset = 2 if skip_bonded != 0 else 1  # start_offset used to avoid
+    for i in range(n):  # double counting
         for j in range(i + start_offset, n):
             dx = positions[j, 0] - positions[i, 0]
             dy = positions[j, 1] - positions[i, 1]
             dz = positions[j, 2] - positions[i, 2]
             r2 = dx * dx + dy * dy + dz * dz
-            if r2 > cutoff2 or r2 < 1e-12:
-                continue
+            if r2 > cutoff2 or r2 < 1e-12:  # to change cut off if we observe
+                continue  # some sensitivity, my simulation so far don't show any
             inv_r2 = 1.0 / r2
             inv_r6 = inv_r2 * inv_r2 * inv_r2
             inv_r12 = inv_r6 * inv_r6
@@ -204,13 +204,13 @@ def compute_lj_forces(
     epsilon: float,
     sigma: float,
     skip_bonded: bool = True,
-    cutoff_factor: float = 2.5,
+    cutoff_factor: float = 2.5,  # for efficiency how far the LJ interaction is computed
     out: np.ndarray | None = None,
 ) -> np.ndarray:
     positions = ensure_positions(positions)
     check_nonnegative("epsilon", epsilon)
     check_nonnegative("sigma", sigma)
-    cutoff = cutoff_factor * sigma
+    cutoff = cutoff_factor * sigma  # this way we ignore distant pairs saving some work
     out = ensure_forces_buffer_like(positions, out)
     out.fill(0.0)
     LOGGER.log(
@@ -265,8 +265,8 @@ def simulate(
     k_B: float,
     T: float,
     dt: float,
-    skip_bonded: bool = True,
-    cutoff_factor: float = 2.5,
+    skip_bonded: bool = True,  # that's how we skip the alredy counted bead
+    cutoff_factor: float = 2.5,  # cut off * sigma (ligma ahahhaha) sorry it's late
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     positions = ensure_positions(positions)
