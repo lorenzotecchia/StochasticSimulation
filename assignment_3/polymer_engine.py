@@ -112,7 +112,7 @@ def _harmonic_kernel(
         dy = positions[i + 1, 1] - positions[i, 1]
         dz = positions[i + 1, 2] - positions[i, 2]
         r = np.sqrt(dx * dx + dy * dy + dz * dz)
-        if r < 1e-12:  # why r and not r-d0
+        if r < 1e-12:
             continue
         fmag = -k * (r - d0)
         inv_r = 1.0 / r
@@ -360,6 +360,43 @@ def gyration_radius2(positions: np.ndarray) -> float:
     return R_g2 / n
 
 
+def bond_length_var(positions: np.ndarray, d0) -> np.ndarray:
+    r2 = np.zeros(positions.shape[0] - 1)
+    for i in range(len(positions) - 1):
+        m0 = positions[i]
+        m1 = positions[i + 1]
+
+        dx = m0[0] - m1[0]
+        dy = m0[1] - m1[1]
+        dz = m0[2] - m1[2]
+        r2[i] = np.sqrt(dx * dx + dy * dy + dz * dz) - d0
+
+    return r2
+
+
+def bond_length(positions: np.ndarray) -> np.ndarray:
+    r2 = np.zeros(positions.shape[0] - 1)
+    for i in range(len(positions) - 1):
+        m0 = positions[i]
+        m1 = positions[i + 1]
+
+        dx = m0[0] - m1[0]
+        dy = m0[1] - m1[1]
+        dz = m0[2] - m1[2]
+        r2[i] = dx * dx + dy * dy + dz * dz
+
+    return r2
+
+
+def MC_MSD(pos_start: np.ndarray, pos_t: np.ndarray) -> float:
+    MC_start = np.mean(pos_start, axis=0)
+    MC_t = np.mean(pos_t, axis=0)
+    dx = MC_start[0] - MC_t[0]
+    dy = MC_start[1] - MC_t[1]
+    dz = MC_start[2] - MC_t[2]
+    return dx * dx + dy * dy + dz * dz
+
+
 def plot_polymer(position: np.ndarray, save_path: str = ""):
     coords = position
 
@@ -398,40 +435,173 @@ if __name__ == "__main__":
     # Validation - ideal chain
     # ================================================================
 
-    # gyration radius
-    N = np.linspace(10, 210, 40, dtype=int)
-    r_ee2_collector = np.zeros_like(N)
-    r_g2_collector = np.zeros_like(N)
+    DIFFUSION_VAL = False
+    EE_R_VAL = False
+    BOND_VAL = False
+    BOND_VAR_VAL = True
 
-    for i in tqdm(range(len(N))):
-        for j in range(40):
-            n = N[i]
-            pos = np.random.randn(n, 3).astype(np.float64)
-            final = simulate(
-                positions=pos,
-                steps=500,
-                k=10.0,
-                d0=1.0,
-                epsilon=1.0,
-                sigma=1.0,
-                gamma=1.0,
-                k_B=1.0,
-                T=1.0,
-                dt=0.01,
-                ideal_chain=True,
-            )
+    sigma = 1
+    epsilon = 1
+    k = 30 * epsilon / sigma / sigma
+    d0 = 0.95 * sigma
+    gamma = 0.75
+    k_B = 1
+    T = 1
+    dt = 1e-3
 
-            r_ee2_collector[i] += end_to_end_radius2(final)
-            r_g2_collector[i] += gyration_radius2(final)
-    # plot_polymer(position=final, save_path="img/polymer_plot")
+    if DIFFUSION_VAL:
+        steps = 10000
+        reps = 1000
 
-    plt.plot(N, r_ee2_collector / 40, label="end to end radius")
-    plt.plot(N, r_g2_collector / 40, label="gyration radius")
-    plt.plot(N, (N - 1) * (1 / 10 + 1), label="ideal end to end", ls="--")
-    plt.plot(N, (N * N - 1) * (1 / 10 + 1) / 6 / N, label="ideal gyration", ls="--")
+        N = 20
+        pos = np.random.randn(N, 3).astype(np.float64)
 
-    plt.grid(alpha=0.5)
-    plt.legend()
-    plt.show()
+        MSD_collector = np.zeros(steps - 1)
 
-    # not validated :D
+        for j in tqdm(range(reps)):
+            pos_start = pos.copy()
+
+            for i in range(steps - 1):
+                final = simulate(
+                    positions=pos_start,
+                    steps=1,
+                    k=k,
+                    d0=d0,
+                    epsilon=epsilon,
+                    sigma=sigma,
+                    gamma=gamma,
+                    k_B=k_B,
+                    T=T,
+                    dt=dt,
+                    ideal_chain=False,
+                )
+
+                MSD_collector[i] += MC_MSD(pos, final)
+                pos_start = final
+
+        t = np.cumsum(np.ones(steps - 1) * dt)
+        plt.plot(t, MSD_collector / reps)
+        plt.plot(t, 6 * t * k_B * T / (N * gamma))
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/diff_validation.png", dpi=300)
+        plt.show()
+        plt.close()
+
+    if EE_R_VAL:
+        N = np.linspace(10, 510, 50, dtype=int)
+        r_ee2_collector = np.zeros_like(N)
+
+        steps = 1000
+        reps = 40
+
+        for i in tqdm(range(len(N))):
+            for j in range(reps):
+                n = N[i]
+                pos = np.random.randn(n, 3).astype(np.float64)
+                final = simulate(
+                    positions=pos,
+                    steps=steps,
+                    k=k,
+                    d0=d0,
+                    epsilon=epsilon,
+                    sigma=sigma,
+                    gamma=gamma,
+                    k_B=k_B,
+                    T=T,
+                    dt=1e-3,
+                    ideal_chain=True,
+                )
+
+                r_ee2_collector[i] += end_to_end_radius2(final)
+
+        # plot_polymer(position=final, save_path="img/polymer_plot")
+
+        plt.plot(N, r_ee2_collector / reps, label="end to end radius")
+        plt.plot(
+            N, 3 * k_B * T / k * np.ones_like(N), label="ideal end to end", ls="--"
+        )
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/end_to_end_val.png", dpi=300)
+        plt.show()
+        plt.close()
+
+    if BOND_VAL:  # james
+        steps = 500
+        reps = 40
+
+        N = np.linspace(10, 210, 50, dtype=int)
+        r2_collector = np.zeros_like(N)
+
+        for i in tqdm(range(len(N))):
+            for j in range(reps):
+                n = N[i]
+                pos = np.random.randn(n, 3).astype(np.float64)
+                final = simulate(
+                    positions=pos,
+                    steps=steps,
+                    k=k,
+                    d0=d0,
+                    epsilon=epsilon,
+                    sigma=sigma,
+                    gamma=gamma,
+                    k_B=k_B,
+                    T=T,
+                    dt=1e-3,
+                    ideal_chain=True,
+                )
+
+                r2_collector[i] += np.mean(bond_length(final))
+
+        plt.plot(N, r2_collector / reps, label="end to end radius")
+        plt.plot(N, 3 * k_B * T / k / N, label="ideal end to end", ls="--")
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/b_length_val.png", dpi=300)
+        plt.show()
+        plt.close()
+
+    if BOND_VAR_VAL:
+        steps = 500
+        reps = 40
+
+        N = np.linspace(10, 210, 50, dtype=int)
+        r2_collector = np.zeros_like(N)
+
+        for i in tqdm(range(len(N))):
+            for j in range(reps):
+                n = N[i]
+                pos = np.random.randn(n, 3).astype(np.float64)
+                final = simulate(
+                    positions=pos,
+                    steps=steps,
+                    k=k,
+                    d0=d0,
+                    epsilon=epsilon,
+                    sigma=sigma,
+                    gamma=gamma,
+                    k_B=k_B,
+                    T=T,
+                    dt=1e-3,
+                    ideal_chain=True,
+                )
+
+                r2_collector[i] += np.mean(bond_length_var(final, d0))
+
+        plt.plot(N, r2_collector / reps, label="bond variation")
+        plt.plot(
+            N,
+            3 * k_B * T / k * np.ones_like(r2_collector),
+            label="theoretical",
+            ls="--",
+        )
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/b_var_val.png", dpi=300)
+        plt.show()
+        plt.close()
