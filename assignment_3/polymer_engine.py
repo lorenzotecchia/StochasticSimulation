@@ -144,7 +144,7 @@ def _lj_kernel(
     sig6 = sigma**6
     sig12 = sig6 * sig6
     cutoff2 = cutoff * cutoff
-    start_offset = 2 if skip_bonded != 0 else 1  # start_offset used to avoid
+    start_offset = 3 if skip_bonded != 0 else 1  # start_offset used to avoid
 
     for i in range(n):  # double counting
         for j in range(i + start_offset, n):
@@ -336,18 +336,6 @@ def simulate(
     return positions
 
 
-def end_to_end_radius2(positions: np.ndarray) -> float:
-    m1 = positions[0]
-    mn = positions[-1]
-
-    dx = m1[0] - mn[0]
-    dy = m1[1] - mn[1]
-    dz = m1[2] - mn[2]
-    R_ee2 = dx * dx + dy * dy + dz * dz
-
-    return R_ee2
-
-
 def gyration_radius2(positions: np.ndarray) -> float:
     n = positions.shape[0]
     R_cm = np.mean(positions, axis=0)
@@ -362,7 +350,18 @@ def gyration_radius2(positions: np.ndarray) -> float:
     return R_g2 / n
 
 
-<<<<<<< Updated upstream
+def end_to_end_radius2(positions: np.ndarray) -> float:
+    m1 = positions[0]
+    mn = positions[-1]
+
+    dx = m1[0] - mn[0]
+    dy = m1[1] - mn[1]
+    dz = m1[2] - mn[2]
+    R_ee2 = dx * dx + dy * dy + dz * dz
+
+    return R_ee2
+
+
 def bond_length_var(positions: np.ndarray, d0) -> np.ndarray:
     r2 = np.zeros(positions.shape[0] - 1)
     for i in range(len(positions) - 1):
@@ -402,7 +401,8 @@ def MC_MSD(pos_start: np.ndarray, pos_t: np.ndarray) -> float:
 
 def plot_polymer(position: np.ndarray, save_path: str = ""):
     coords = position
-=======
+
+
 def validation_simulation():
     for i in tqdm(range(len(N))):
         for j in range(40):
@@ -421,7 +421,6 @@ def validation_simulation():
                 dt=0.01,
                 ideal_chain=True,
             )
->>>>>>> Stashed changes
 
             r_ee2_collector[i] += end_to_end_radius2(final)
             r_g2_collector[i] += gyration_radius2(final)
@@ -465,18 +464,18 @@ if __name__ == "__main__":
     # ================================================================
 
     DIFFUSION_VAL = False
-    EE_R_VAL = False
+    RADIUS_VAL = False
     BOND_VAL = False
-    BOND_VAR_VAL = True
+    BOND_VAR_VAL = False
 
     sigma = 1
     epsilon = 1
-    k = 30 * epsilon / sigma / sigma
-    d0 = 0.95 * sigma
+    k = 1  # * epsilon / sigma / sigma
+    d0 = 0.95  # * sigma
     gamma = 0.75
     k_B = 1
-    T = 1
-    dt = 1e-3
+    T = 5
+    dt = 1e-4
 
     if DIFFUSION_VAL:
         steps = 10000
@@ -518,20 +517,34 @@ if __name__ == "__main__":
         plt.show()
         plt.close()
 
-    if EE_R_VAL:
-        N = np.linspace(10, 510, 50, dtype=int)
+    if RADIUS_VAL:
+        N = np.linspace(10, 510, 10, dtype=int)
         r_ee2_collector = np.zeros_like(N)
+        r_g2_collector = np.zeros_like(N)
 
-        steps = 1000
+        steps_equil = 200000
+        steps_sample = 10000
         reps = 40
 
         for i in tqdm(range(len(N))):
-            for j in range(reps):
-                n = N[i]
-                pos = np.random.randn(n, 3).astype(np.float64)
-                final = simulate(
-                    positions=pos,
-                    steps=steps,
+            n = N[i]
+            Ree2 = 0
+            Rg2 = 0
+
+            for r in range(reps):
+                positions = np.zeros((n, 3))
+                for j in range(1, n):
+                    displacement = np.random.randn(3)
+                    positions[j] = positions[
+                        j - 1
+                    ] + d0 * displacement / np.linalg.norm(displacement)
+
+                positions -= positions.mean(axis=0)
+
+                # equilibrium
+                positions = simulate(
+                    positions=positions,
+                    steps=steps_equil,
                     k=k,
                     d0=d0,
                     epsilon=epsilon,
@@ -542,12 +555,42 @@ if __name__ == "__main__":
                     dt=1e-3,
                     ideal_chain=True,
                 )
+                positions -= np.mean(positions, axis=0)
 
-                r_ee2_collector[i] += end_to_end_radius2(final)
+                ree2_sum = 0.0
+                rg2_sum = 0.0
+                # print("data collection")
+                for _ in range(steps_sample):
+                    positions = simulate(
+                        positions,
+                        steps=1,
+                        k=k,
+                        d0=d0,
+                        epsilon=epsilon,
+                        sigma=sigma,
+                        gamma=gamma,
+                        k_B=k_B,
+                        T=T,
+                        dt=dt,
+                        ideal_chain=True,
+                    )
+                    positions -= positions.mean(axis=0)
+                    ree2_sum += end_to_end_radius2(positions)
+                    rg2_sum += gyration_radius2(positions)
 
-        # plot_polymer(position=final, save_path="img/polymer_plot")
+                Ree2 += ree2_sum / steps_sample
+                Rg2 += rg2_sum / steps_sample
+            r_ee2_collector[i] = Ree2 / reps
+            r_g2_collector[i] = Rg2 / reps
 
-        plt.plot(N, r_ee2_collector / reps, label="end to end radius")
+        plt.plot(N, np.sqrt(r_g2_collector), label="gyration radius")
+        plt.plot(N, np.sqrt(N), label="ideal gyration", ls="--")
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/gyration_val.png", dpi=300)
+        plt.close()
+
+        plt.plot(N, r_ee2_collector, label="end to end radius")
         plt.plot(
             N, 3 * k_B * T / k * np.ones_like(N), label="ideal end to end", ls="--"
         )
@@ -555,7 +598,6 @@ if __name__ == "__main__":
         plt.grid(alpha=0.5)
         plt.legend()
         plt.savefig("img/end_to_end_val.png", dpi=300)
-        plt.show()
         plt.close()
 
     if BOND_VAL:  # james
@@ -585,8 +627,8 @@ if __name__ == "__main__":
 
                 r2_collector[i] += np.mean(bond_length(final))
 
-        plt.plot(N, r2_collector / reps, label="end to end radius")
-        plt.plot(N, 3 * k_B * T / k / N, label="ideal end to end", ls="--")
+        plt.plot(N, r2_collector / reps, label="bond length")
+        plt.plot(N, 3 * k_B * T / k / N, label="ideal bond length", ls="--")
 
         plt.grid(alpha=0.5)
         plt.legend()
