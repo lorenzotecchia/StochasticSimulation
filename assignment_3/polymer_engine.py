@@ -436,8 +436,7 @@ if __name__ == "__main__":
     # ================================================================
 
     DIFFUSION_VAL = False
-    EE_R_VAL = False
-    G_R_VAL = True
+    RADIUS_VAL = False
     BOND_VAL = False
     BOND_VAR_VAL = False
 
@@ -490,7 +489,7 @@ if __name__ == "__main__":
         plt.show()
         plt.close()
 
-    if EE_R_VAL:
+    if RADIUS_VAL:
         N = np.linspace(10, 510, 10, dtype=int)
         r_ee2_collector = np.zeros_like(N)
         r_g2_collector = np.zeros_like(N)
@@ -502,7 +501,7 @@ if __name__ == "__main__":
         for i in tqdm(range(len(N))):
             n = N[i]
             Ree2 = 0
-            Rg2
+            Rg2 = 0
 
             for r in range(reps):
                 positions = np.zeros((n, 3))
@@ -571,77 +570,6 @@ if __name__ == "__main__":
         plt.grid(alpha=0.5)
         plt.legend()
         plt.savefig("img/end_to_end_val.png", dpi=300)
-        plt.close()
-
-    if G_R_VAL:
-        N = np.linspace(10, 510, 5, dtype=int)
-        r_g2_collector = np.zeros_like(N)
-
-        steps_equil = 20000
-        steps_sample = 10000
-        reps = 2
-
-        for i in tqdm(range(len(N))):
-            n = N[i]
-            Rg2 = 0
-
-            for r in range(reps):
-                positions = np.zeros((n, 3))
-                for j in range(1, n):
-                    displacement = np.random.randn(3)
-                    positions[j] = positions[
-                        j - 1
-                    ] + d0 * displacement / np.linalg.norm(displacement)
-
-                positions -= positions.mean(axis=0)
-
-                # equilibrium
-                positions = simulate(
-                    positions=positions,
-                    steps=steps_equil,
-                    k=k,
-                    d0=d0,
-                    epsilon=epsilon,
-                    sigma=sigma,
-                    gamma=gamma,
-                    k_B=k_B,
-                    T=T,
-                    dt=1e-3,
-                    ideal_chain=True,
-                )
-                positions -= np.mean(positions, axis=0)
-
-                rg2_sum = 0.0
-                # print("data collection")
-                for _ in range(steps_sample):
-                    positions = simulate(
-                        positions,
-                        steps=1,
-                        k=k,
-                        d0=d0,
-                        epsilon=epsilon,
-                        sigma=sigma,
-                        gamma=gamma,
-                        k_B=k_B,
-                        T=T,
-                        dt=dt,
-                        ideal_chain=True,
-                    )
-                    positions -= positions.mean(axis=0)
-                    rg2_sum += gyration_radius2(positions)
-
-                Rg2 += rg2_sum / steps_sample
-
-            r_g2_collector[i] = Rg2 / reps
-        print("loop ended, now plotting")
-        print(np.isnan(r_g2_collector).any())
-
-        plt.plot(N, np.sqrt(r_g2_collector), label="gyration radius")
-        plt.plot(N, np.sqrt(N), label="ideal gyration", ls="--")
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/gyration_val.png", dpi=300)
-        # plt.show()
         plt.close()
 
     if BOND_VAL:  # james
