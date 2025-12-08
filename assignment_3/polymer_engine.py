@@ -1,11 +1,13 @@
-import numpy as np
-from numba import njit
 import matplotlib.pyplot as plt
+import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
+from numba import njit
 from tqdm import tqdm
 
-
-# TODO: Implement simulated annealing and MCMC techinques
+# TODO:
+#   - Implement simulated annealing and MCMC techinques
+#   - Somma delle energie
+#   - raccogliere tutte le posizioni per verificare varizione di posizione da prec a succ
 
 
 # Logging system
@@ -360,6 +362,7 @@ def gyration_radius2(positions: np.ndarray) -> float:
     return R_g2 / n
 
 
+<<<<<<< Updated upstream
 def bond_length_var(positions: np.ndarray, d0) -> np.ndarray:
     r2 = np.zeros(positions.shape[0] - 1)
     for i in range(len(positions) - 1):
@@ -399,13 +402,39 @@ def MC_MSD(pos_start: np.ndarray, pos_t: np.ndarray) -> float:
 
 def plot_polymer(position: np.ndarray, save_path: str = ""):
     coords = position
+=======
+def validation_simulation():
+    for i in tqdm(range(len(N))):
+        for j in range(40):
+            n = N[i]
+            pos = np.random.randn(n, 3).astype(np.float64)
+            final = simulate(
+                positions=pos,
+                steps=500,
+                k=10.0,
+                d0=1.0,
+                epsilon=1.0,
+                sigma=1.0,
+                gamma=1.0,
+                k_B=1.0,
+                T=1.0,
+                dt=0.01,
+                ideal_chain=True,
+            )
+>>>>>>> Stashed changes
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax.plot(coords[:, 0], coords[:, 1], coords[:, 2], "-o")
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-    plt.close()
+            r_ee2_collector[i] += end_to_end_radius2(final)
+            r_g2_collector[i] += gyration_radius2(final)
+    # plot_polymer(position=final, save_path="img/polymer_plot")
+
+    plt.plot(N, r_ee2_collector / 40, label="end to end radius")
+    plt.plot(N, r_g2_collector / 40, label="gyration radius")
+    plt.plot(N, (N - 1) * (1 / 10 + 1), label="ideal end to end", ls="--")
+    plt.plot(N, (N * N - 1) * (1 / 10 + 1) / 6 / N, label="ideal gyration", ls="--")
+
+    plt.grid(alpha=0.5)
+    plt.legend()
+    plt.show()
 
 
 # ================================================================
@@ -415,22 +444,22 @@ def plot_polymer(position: np.ndarray, save_path: str = ""):
 if __name__ == "__main__":
     set_log_level("ERROR")  # ERROR, WARN, INFO, DEBUG
     set_log_output("sim.log")  # or None
-    """
-    N = 10
-    pos = np.random.randn(N, 3).astype(np.float64)
-    final = simulate(
-        positions=pos,
-        steps=1000,
-        k=10.0,
-        d0=1.0,
-        epsilon=1.0,
-        sigma=1.0,
-        gamma=1.0,
-        k_B=1.0,
-        T=1.0,
-        dt=0.01,
-    )
-    """
+
+    # N = 10
+    # pos = np.random.randn(N, 3).astype(np.float64)
+    # final = simulate(
+    #     positions=pos,
+    #     steps=1000,
+    #     k=10.0,
+    #     d0=1.0,
+    #     epsilon=1.0,
+    #     sigma=1.0,
+    #     gamma=1.0,
+    #     k_B=1.0,
+    #     T=1.0,
+    #     dt=0.01,
+    # )
+
     # ================================================================
     # Validation - ideal chain
     # ================================================================
