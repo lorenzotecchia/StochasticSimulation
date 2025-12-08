@@ -3,11 +3,10 @@ import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
 from numba import njit
 from tqdm import tqdm
+from scipy import constants
 
-# TODO:
-#   - Implement simulated annealing and MCMC techinques
-#   - Somma delle energie
-#   - raccogliere tutte le posizioni per verificare varizione di posizione da prec a succ
+
+# TODO: Implement simulated annealing and MCMC techinques
 
 
 # Logging system
@@ -105,7 +104,12 @@ def check_positive(name: str, v: float):
 # Numba kernels
 @njit(fastmath=True)
 def _harmonic_kernel(
-    positions: np.ndarray, forces: np.ndarray, k: float, d0: float, energy: float = 0.0
+    positions: np.ndarray,
+    forces: np.ndarray,
+    k_B: float,
+    T: float,
+    d0: float,
+    energy: float = 0.0,
 ):
     n = positions.shape[0]
     # Caller ensures forces is zeroed
@@ -116,6 +120,17 @@ def _harmonic_kernel(
         r = np.sqrt(dx * dx + dy * dy + dz * dz)
         if r < 1e-12:
             continue
+
+        m1 = positions[0]
+        mn = positions[-1]
+        dx = m1[0] - mn[0]
+        dy = m1[1] - mn[1]
+        dz = m1[2] - mn[2]
+
+        b2 = dx * dx + dy * dy + dz * dz
+        b2 = b2 / positions.shape[0]
+
+        k = 3 * k_B * T / b2 / n
         fmag = -k * (r - d0)
         inv_r = 1.0 / r
         fx = fmag * dx * inv_r
@@ -199,18 +214,19 @@ def _langevin_kernel(
 # Functions to be called
 def compute_harmonic_forces(
     positions: np.ndarray,
-    k: float,
+    k_B: float,
+    T: float,
     d0: float,
     out: np.ndarray | None = None,
     energy: float = 0.0,
 ) -> np.ndarray:
     positions = ensure_positions(positions)
-    if not np.isfinite(k) or not np.isfinite(d0):
-        raise ValueError("k and d0 must be finite")
+    if not np.isfinite(d0):
+        raise ValueError("d0 must be finite")
     out = ensure_forces_buffer_like(positions, out)
     out.fill(0.0)
     LOGGER.log("DEBUG", "Computing harmonic forces", tag="harmonic")
-    _harmonic_kernel(positions, out, k, d0, energy=energy)
+    _harmonic_kernel(positions, out, k_B, T, d0, energy=energy)
     LOGGER.log("DEBUG", f"Forces sample: {out[:3]}", tag="harmonic")
     LOGGER.log("DEBUG", f"Energy sample: {energy}", tag="harmonic")
 
@@ -279,7 +295,6 @@ def langevin_step(
 def simulate(
     positions: np.ndarray,
     steps: int,
-    k: float,
     d0: float,
     epsilon: float,
     sigma: float,
@@ -311,7 +326,7 @@ def simulate(
             LOGGER.log("INFO", f"[step {step}]", tag="sim")
 
         # Fill preallocated buffers
-        compute_harmonic_forces(positions, k, d0, out=f_h, energy=energy[1])
+        compute_harmonic_forces(positions, k_B, T, d0, out=f_h, energy=energy[1])
 
         if not ideal_chain:
             compute_lj_forces(
@@ -443,38 +458,36 @@ def validation_simulation():
 if __name__ == "__main__":
     set_log_level("ERROR")  # ERROR, WARN, INFO, DEBUG
     set_log_output("sim.log")  # or None
-
-    # N = 10
-    # pos = np.random.randn(N, 3).astype(np.float64)
-    # final = simulate(
-    #     positions=pos,
-    #     steps=1000,
-    #     k=10.0,
-    #     d0=1.0,
-    #     epsilon=1.0,
-    #     sigma=1.0,
-    #     gamma=1.0,
-    #     k_B=1.0,
-    #     T=1.0,
-    #     dt=0.01,
-    # )
-
+    """
+    N = 10
+    pos = np.random.randn(N, 3).astype(np.float64)
+    final = simulate(
+        positions=pos,
+        steps=1000,
+        d0=1.0,
+        epsilon=1.0,
+        sigma=1.0,
+        gamma=1.0,
+        k_B=1.0,
+        T=1.0,
+        dt=0.01,
+    )
+    """
     # ================================================================
     # Validation - ideal chain
     # ================================================================
 
     DIFFUSION_VAL = False
-    RADIUS_VAL = False
+    RADIUS_VAL = True
     BOND_VAL = False
     BOND_VAR_VAL = False
 
     sigma = 1
     epsilon = 1
-    k = 1  # * epsilon / sigma / sigma
     d0 = 0.95  # * sigma
     gamma = 0.75
-    k_B = 1
-    T = 5
+    k_B = constants.Boltzmann
+    T = 300
     dt = 1e-4
 
     if DIFFUSION_VAL:
@@ -493,7 +506,6 @@ if __name__ == "__main__":
                 final = simulate(
                     positions=pos_start,
                     steps=1,
-                    k=k,
                     d0=d0,
                     epsilon=epsilon,
                     sigma=sigma,
@@ -518,20 +530,20 @@ if __name__ == "__main__":
         plt.close()
 
     if RADIUS_VAL:
-        N = np.linspace(10, 510, 10, dtype=int)
+        N = np.linspace(10, 510, 5, dtype=int)
         r_ee2_collector = np.zeros_like(N)
         r_g2_collector = np.zeros_like(N)
 
-        steps_equil = 200000
-        steps_sample = 10000
-        reps = 40
+        steps_equil = 0
+        steps_sample = 1000
+        reps = 50
 
         for i in tqdm(range(len(N))):
             n = N[i]
             Ree2 = 0
             Rg2 = 0
 
-            for r in range(reps):
+            for r in tqdm(range(reps)):
                 positions = np.zeros((n, 3))
                 for j in range(1, n):
                     displacement = np.random.randn(3)
@@ -541,11 +553,11 @@ if __name__ == "__main__":
 
                 positions -= positions.mean(axis=0)
 
+                b2 = end_to_end_radius2(positions) / n
                 # equilibrium
                 positions = simulate(
                     positions=positions,
                     steps=steps_equil,
-                    k=k,
                     d0=d0,
                     epsilon=epsilon,
                     sigma=sigma,
@@ -564,7 +576,6 @@ if __name__ == "__main__":
                     positions = simulate(
                         positions,
                         steps=1,
-                        k=k,
                         d0=d0,
                         epsilon=epsilon,
                         sigma=sigma,
@@ -590,10 +601,8 @@ if __name__ == "__main__":
         plt.savefig("img/gyration_val.png", dpi=300)
         plt.close()
 
-        plt.plot(N, r_ee2_collector, label="end to end radius")
-        plt.plot(
-            N, 3 * k_B * T / k * np.ones_like(N), label="ideal end to end", ls="--"
-        )
+        plt.plot(N, np.sqrt(r_ee2_collector), label="end to end radius")
+        plt.plot(N, np.sqrt(N), label="ideal end to end", ls="--")
 
         plt.grid(alpha=0.5)
         plt.legend()
@@ -614,7 +623,6 @@ if __name__ == "__main__":
                 final = simulate(
                     positions=pos,
                     steps=steps,
-                    k=k,
                     d0=d0,
                     epsilon=epsilon,
                     sigma=sigma,
@@ -650,7 +658,6 @@ if __name__ == "__main__":
                 final = simulate(
                     positions=pos,
                     steps=steps,
-                    k=k,
                     d0=d0,
                     epsilon=epsilon,
                     sigma=sigma,
