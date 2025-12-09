@@ -110,7 +110,7 @@ def _harmonic_kernel(
     forces: np.ndarray,
     k: float,
     d0: float,
-    energy: float = 0.0,
+    energy: float | None = None,
 ):
     n = positions.shape[0]
     # Caller ensures forces is zeroed
@@ -133,7 +133,7 @@ def _harmonic_kernel(
         forces[i + 1, 0] += fx
         forces[i + 1, 1] += fy
         forces[i + 1, 2] += fz
-        energy += 0.5 * k * (r - d0) ** 2
+        energy[0] += 0.5 * k * (r - d0) ** 2
 
 
 @njit(fastmath=True)
@@ -144,7 +144,7 @@ def _lj_kernel(
     sigma: float,
     skip_bonded: int,
     cutoff: float,
-    energy: float = 0.0,
+    energy: float | None = None,
 ):
     n = positions.shape[0]
     sig6 = sigma**6
@@ -173,7 +173,7 @@ def _lj_kernel(
             forces[j, 0] += fx
             forces[j, 1] += fy
             forces[j, 2] += fz
-            energy += 4.0 * epsilon * (sig12 * inv_r12 - sig6 * inv_r6)
+            energy[0] += 4.0 * epsilon * (sig12 * inv_r12 - sig6 * inv_r6)
 
 
 @njit(fastmath=True)
@@ -216,10 +216,11 @@ def compute_harmonic_forces(
     out = ensure_forces_buffer_like(positions, out)
     out.fill(0.0)
     LOGGER.log("DEBUG", "Computing harmonic forces", tag="harmonic")
-    _harmonic_kernel(positions, out, k, d0, energy=energy)
+    energy_arr = np.array([energy], dtype=np.float64)
+    _harmonic_kernel(positions, out, k, d0, energy=energy_arr)
+    energy = energy_arr[0]
     LOGGER.log("DEBUG", f"Forces sample: {out[:3]}", tag="harmonic")
     LOGGER.log("DEBUG", f"Energy sample: {energy}", tag="harmonic")
-
     return out, energy
 
 
@@ -243,9 +244,17 @@ def compute_lj_forces(
         f"Computing LJ forces (epsilon={epsilon}, sigma={sigma}, cutoff={cutoff:.3f}, skip_bonded={skip_bonded})",
         tag="lj",
     )
+    energy_arr = np.array([energy], dtype=np.float64)
     _lj_kernel(
-        positions, out, epsilon, sigma, 1 if skip_bonded else 0, cutoff, energy=energy
+        positions,
+        out,
+        epsilon,
+        sigma,
+        1 if skip_bonded else 0,
+        cutoff,
+        energy=energy_arr,
     )
+    energy = energy_arr[0]
     LOGGER.log("DEBUG", f"LJ sample: {out[:3]}", tag="lj")
     LOGGER.log("DEBUG", f"energy sample: {energy}", tag="lj")
     return out, energy
@@ -336,9 +345,10 @@ def simulate(
         total_f[:] = f_h + f_lj
         # print("mean |F| =", np.mean(np.linalg.norm(total_f, axis=1)))
 
+        # print(f"Harmonic Energy: {energy[1]}, LJ Energy: {energy[2]}")
         # Integrate
         langevin_step(positions, total_f, gamma, k_B, T, dt, rng=rng)
-
+        print(energy)
     LOGGER.log("INFO", "Simulation finished", tag="sim")
     return positions
 
@@ -415,6 +425,7 @@ def plot_polymer(position: np.ndarray, save_path: str = ""):
 
 
 def validation_simulation():
+
     for i in tqdm(range(len(N))):
         for j in range(40):
             n = N[i]
@@ -447,6 +458,88 @@ def validation_simulation():
     plt.show()
 
 
+def mala_step(
+    positions: np.ndarray,
+    gamma: float,
+    k_b: float,
+    k: float,
+    T: float,
+    dt: float,
+    epsilon: float,
+    sigma: float,
+    d0: float,
+    skip_bonded: bool = True,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """
+    Performs one MALA step for the polymer chain
+    """
+
+    # compute current forces and energy
+    f_h = np.zeros_like(positions, dtype=np.float64)
+    f_lj = np.zeros_like(positions, dtype=np.float64)
+
+    _, e_h = compute_harmonic_forces(positions=positions, k=k, d0=d0, out=f_h)
+    _, e_lj = compute_lj_forces(
+        positions=positions,
+        epsilon=epsilon,
+        sigma=sigma,
+        skip_bonded=skip_bonded,
+        out=f_lj,
+    )
+
+    u_current = e_h + e_lj
+    f_current = f_h + f_lj
+
+    # save current state
+    pos_current = positions.copy()
+
+    # generate proposal
+    langevin_step(positions, f_current, gamma, k_b, T, dt, rng=rng)
+
+    pos_proposal = positions
+
+    # compute forces and energy at proposal
+    f_h_prop = np.zeros_like(pos_proposal, dtype=np.float64)
+    f_lj_prop = np.zeros_like(pos_proposal, dtype=np.float64)
+    _, e_h_prop = compute_harmonic_forces(
+        positions=pos_proposal, k=k_b, d0=d0, out=f_h_prop
+    )
+    _, e_lj_prop = compute_lj_forces(
+        positions=pos_proposal,
+        epsilon=epsilon,
+        sigma=sigma,
+        skip_bonded=skip_bonded,
+        out=f_lj_prop,
+    )
+    u_proposal = e_h_prop + e_lj_prop
+    f_proposal = f_h_prop + f_lj_prop
+
+    print(u_proposal, u_current)
+    # hastings correction
+    mu = dt / gamma
+    D = k_b * T * dt / gamma
+
+    # forward prob q(x'|x)
+    diff_forward = pos_proposal - pos_current - mu * f_current
+    log_q_forward = -np.sum(diff_forward**2) / (4 * D)
+
+    # backward prob q(x|x')
+    diff_backward = pos_current - pos_proposal - mu * f_proposal
+    log_q_backward = -np.sum(diff_backward**2) / (4 * D)
+
+    # acceptance probability
+    log_alpha = (u_current - u_proposal) / (k_b * T) + log_q_backward - log_q_forward
+
+    # accept or reject
+    if np.random.rand() < np.exp(log_alpha):
+        # accept
+        return pos_proposal, [e_h_prop, e_lj_prop]
+    else:
+        # reject
+        return pos_current, [e_h, e_lj]
+
+
 # ================================================================
 # Example run
 # ================================================================
@@ -459,11 +552,12 @@ if __name__ == "__main__":
     # Validation - ideal chain
     # ================================================================
 
-    DIFFUSION_VAL = True
+    DIFFUSION_VAL = False
     WARM_UP = False
     RADIUS_VAL = False
     BOND_VAL = False
     BOND_VAR_VAL = False
+    FULL_SIM = True
 
     # sigma = 10**-9
     # d0 = 0.95  # boh
@@ -482,6 +576,34 @@ if __name__ == "__main__":
     T = 1
     k = 30
     dt = 1e-3
+
+    if FULL_SIM:
+        N = 5
+        pos = np.random.randn(N, 3).astype(np.float64)
+        pos = ensure_positions(pos)
+        start_pos = pos.copy()
+
+        es = []
+        for i in range(50):
+            pos, energy = mala_step(
+                pos,
+                gamma,
+                k_B,
+                k,
+                T,
+                dt,
+                epsilon,
+                sigma,
+                d0,
+                skip_bonded=True,
+                rng=None,
+            )
+            es.append(energy)
+
+        plt.plot(np.array(es)[:, 0], label="Harmonic Energy")
+        plt.plot(np.array(es)[:, 1], label="LJ Energy")
+        plt.legend()
+        plt.show()
 
     if DIFFUSION_VAL:
         steps = 10000
