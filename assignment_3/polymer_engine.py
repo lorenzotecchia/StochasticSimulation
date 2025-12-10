@@ -435,7 +435,7 @@ def mala_step(
         return pos_current, [e_h, e_lj]
 
 
-def initial_positions2(N: int, d0: float):
+def initial_positions_old(N: int, d0: float):
     positions = np.zeros((N, 3))
     for j in range(1, N):
         displacement = np.random.randn(3)
@@ -547,11 +547,13 @@ def MC_MSD(pos_start: np.ndarray, pos_t: np.ndarray) -> float:
 
 
 def two_sides_test(sample: list, theoretical_value: float, alpha: float = 0.05) -> bool:
-    t_crit = stats.t.ppf(q=1 - alpha / 2, df=len(sample) - 1)
+    t_crit = stats.t.ppf(q=1 - alpha / 2, df=len(sample))
     t_stat = (np.mean(sample) - theoretical_value) / (
         np.std(sample) / np.sqrt(len(sample))
     )
-    return abs(t_stat) < t_crit
+    print(t_crit, len(sample), np.mean(sample))
+    reject = abs(t_stat) < t_crit
+    return not reject
 
 
 def diffusion_fit_plot(
@@ -1023,30 +1025,34 @@ def energy_langevin_plot(
 ):
     # average_energy = np.zeros((steps, 2))
     positions = initial_positions(N, d0)
-    _, energy = simulate(
-        positions,
-        steps=steps,
-        d0=d0,
-        epsilon=epsilon,
-        sigma=sigma,
-        gamma=gamma,
-        k=k,
-        k_B=k_B,
-        T=T,
-        dt=dt,
-        ideal_chain=ideal_chain,
-    )
-    # average_energy[:, 0] += energy[:, 0]
-    # average_energy[:, 1] += energy[:, 1]
+    average_he = np.zeros(steps)
+    average_lje = np.zeros(steps)
+
+    for r in tqdm(range(reps)):
+        _, energy = simulate(
+            positions,
+            steps=steps,
+            d0=d0,
+            epsilon=epsilon,
+            sigma=sigma,
+            gamma=gamma,
+            k=k,
+            k_B=k_B,
+            T=T,
+            dt=dt,
+            ideal_chain=ideal_chain,
+        )
+        average_he += energy[:, 0]
+        average_lje += energy[:, 1]
 
     t = np.linspace(dt, dt * steps, steps)
 
-    plt.plot(t, energy[:, 0], label="Harmonic Energy")
-    plt.plot(t, energy[:, 1], label="LJ Energy")
+    plt.plot(t, average_he / reps, label="Harmonic Energy")
+    plt.plot(t, average_lje / reps, label="LJ Energy")
     plt.grid(alpha=0.4)
     plt.plot(
         t,
-        (energy[:, 0] + energy[:, 1]),
+        (average_he + average_lje) / reps,
         color="red",
         ls="--",
         label="Total Energy",
@@ -1056,6 +1062,11 @@ def energy_langevin_plot(
     plt.close()
     print(energy[:, 0][:10])
     print(energy[:, 1][:10])
+
+
+# ================================================================
+# Example run
+# ================================================================
 
 
 # ================================================================
@@ -1074,23 +1085,23 @@ if __name__ == "__main__":
     # it plots ee radius over time, with theroetical value
 
     steps = 1000
-    reps = 200
+    reps = 100
     N = 50
     # warm_up(N, steps, reps)
 
     # for ideal chain: computes R_ee letting N vary, plus fit
     N_list = np.linspace(10, 210, 50, dtype=int)
-    # data_varying_N(N_list, steps, reps, ideal_chain=True)
+    data_varying_N(N_list, steps, reps, ideal_chain=True)
 
     # introducing LJ potential, see how diffusion constant changes with N plus fit
-    # data_varying_N(N_list, steps, reps, ideal_chain=False)
+    data_varying_N(N_list, steps, reps, ideal_chain=False)
 
     N, steps, reps = 20, 10000, 200
     # diffusion(N, steps, reps, fit=True, plot3D=True, plotXYZ=True)
 
     # plot energy Langevin
     N, steps, reps = 20, 10000, 1
-    energy_langevin_plot(N, steps, reps)
+    # energy_langevin_plot(N, steps, reps)
 
     FULL_SIM = False
 
