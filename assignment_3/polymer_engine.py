@@ -1,12 +1,14 @@
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy import stats
 import numpy as np
+import pandas as pd
 from mpl_toolkits.mplot3d import Axes3D
 import plotly.graph_objects as go
 from numba import njit
 from tqdm import tqdm
 from scipy import constants
-
+import csv
 
 # TODO: Implement simulated annealing and MCMC techinques
 
@@ -110,7 +112,7 @@ def _harmonic_kernel(
     forces: np.ndarray,
     k: float,
     d0: float,
-    energy: float | None = None,
+    energy: float = 0.0,
 ):
     n = positions.shape[0]
     # Caller ensures forces is zeroed
@@ -133,7 +135,7 @@ def _harmonic_kernel(
         forces[i + 1, 0] += fx
         forces[i + 1, 1] += fy
         forces[i + 1, 2] += fz
-        energy[0] += 0.5 * k * (r - d0) ** 2
+        energy += 0.5 * k * (r - d0) ** 2
 
 
 @njit(fastmath=True)
@@ -144,7 +146,7 @@ def _lj_kernel(
     sigma: float,
     skip_bonded: int,
     cutoff: float,
-    energy: float | None = None,
+    energy: float = 0.0,
 ):
     n = positions.shape[0]
     sig6 = sigma**6
@@ -173,7 +175,7 @@ def _lj_kernel(
             forces[j, 0] += fx
             forces[j, 1] += fy
             forces[j, 2] += fz
-            energy[0] += 4.0 * epsilon * (sig12 * inv_r12 - sig6 * inv_r6)
+            energy += 4.0 * epsilon * (sig12 * inv_r12 - sig6 * inv_r6)
 
 
 @njit(fastmath=True)
@@ -216,11 +218,10 @@ def compute_harmonic_forces(
     out = ensure_forces_buffer_like(positions, out)
     out.fill(0.0)
     LOGGER.log("DEBUG", "Computing harmonic forces", tag="harmonic")
-    energy_arr = np.array([energy], dtype=np.float64)
-    _harmonic_kernel(positions, out, k, d0, energy=energy_arr)
-    energy = energy_arr[0]
+    _harmonic_kernel(positions, out, k, d0, energy=energy)
     LOGGER.log("DEBUG", f"Forces sample: {out[:3]}", tag="harmonic")
     LOGGER.log("DEBUG", f"Energy sample: {energy}", tag="harmonic")
+
     return out, energy
 
 
@@ -244,17 +245,9 @@ def compute_lj_forces(
         f"Computing LJ forces (epsilon={epsilon}, sigma={sigma}, cutoff={cutoff:.3f}, skip_bonded={skip_bonded})",
         tag="lj",
     )
-    energy_arr = np.array([energy], dtype=np.float64)
     _lj_kernel(
-        positions,
-        out,
-        epsilon,
-        sigma,
-        1 if skip_bonded else 0,
-        cutoff,
-        energy=energy_arr,
+        positions, out, epsilon, sigma, 1 if skip_bonded else 0, cutoff, energy=energy
     )
-    energy = energy_arr[0]
     LOGGER.log("DEBUG", f"LJ sample: {out[:3]}", tag="lj")
     LOGGER.log("DEBUG", f"energy sample: {energy}", tag="lj")
     return out, energy
@@ -345,11 +338,21 @@ def simulate(
         total_f[:] = f_h + f_lj
         # print("mean |F| =", np.mean(np.linalg.norm(total_f, axis=1)))
 
-        # print(f"Harmonic Energy: {energy[1]}, LJ Energy: {energy[2]}")
         # Integrate
         langevin_step(positions, total_f, gamma, k_B, T, dt, rng=rng)
-        print(energy)
+
     LOGGER.log("INFO", "Simulation finished", tag="sim")
+    return positions
+
+
+def initial_positions(N: int, d0: float):
+    positions = np.zeros((N, 3))
+    for j in range(1, N):
+        displacement = np.random.randn(3)
+        positions[j] = positions[j - 1] + d0 * displacement / np.linalg.norm(
+            displacement
+        )
+    positions -= positions.mean(axis=0)
     return positions
 
 
@@ -416,128 +419,455 @@ def MC_MSD(pos_start: np.ndarray, pos_t: np.ndarray) -> float:
     return dx * dx + dy * dy + dz * dz
 
 
-def linear_fit(x, a, b):
-    return a * x + b
+def two_sides_test(sample: list, theoretical_value: float, alpha: float = 0.05) -> bool:
+    t_crit = stats.t.ppf(q=1 - alpha / 2, df=len(sample) - 1)
+    t_stat = (np.mean(sample) - theoretical_value) / (
+        np.std(sample) / np.sqrt(len(sample))
+    )
+    return abs(t_stat) < t_crit
 
 
-def plot_polymer(position: np.ndarray, save_path: str = ""):
-    coords = position
+def diffusion_fit_plot(
+    MSD_all: np.ndarray,
+    N: int,
+    dt: float,
+    plot: bool = True,
+    gamma: float = 1,
+    k_B: float = 1,
+    T: float = 1,
+):
+    reps = MSD_all.shape[0]
+    n_intervals = MSD_all.shape[1]
+    t = np.arange(n_intervals) * dt
+
+    MSD_mean = MSD_all.mean(axis=0)
+    MSD_sem = MSD_all.std(axis=0, ddof=1) / np.sqrt(reps)
+    MSD_theory = 6 * (k_B * T) / (N * gamma) * t
+
+    # 95% confidence interval
+    t_crit = stats.t.ppf(0.975, reps - 1)
+    CI_low = MSD_mean - t_crit * MSD_sem
+    CI_high = MSD_mean + t_crit * MSD_sem
+
+    inside = np.logical_and(MSD_theory >= CI_low, MSD_theory <= CI_high)
+    inside_all = inside.all()
+    print(f"Is theoretical MSD within 95% CI at all times? {inside_all}")
+
+    if plot:
+        plt.plot(t, MSD_mean, label="simulated MSD", markersize=7)
+        plt.fill_between(
+            t, CI_low, CI_high, color="gray", alpha=0.3, label="95% Confidence Interval"
+        )
+        plt.plot(t, MSD_theory, label="theoretical MSD", ls="--")
+        plt.xlabel("Time (t)")
+        plt.ylabel("Mean Squared Displacement (MSD)")
+        plt.title("Center of Mass MSD over Time")
+        plt.tight_layout()
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/diff_validation.png", dpi=300)
+        plt.close()
+
+    slopes_sample = np.zeros(reps)
+    for r in range(reps):
+        slopes_sample[r], _, r_value, _, stderr = stats.linregress(t, MSD_all[r, :])
+    NOT_REJECT = two_sides_test(slopes_sample, 6 * k_B * T / (N * gamma))
+    print(f"not rejected: {NOT_REJECT}")
 
 
-def validation_simulation():
+def plot_diffusion_3D(x: np.ndarray, y: np.ndarray, z: np.ndarray, steps: int):
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
 
-    for i in tqdm(range(len(N))):
-        for j in range(40):
-            n = N[i]
-            pos = np.random.randn(n, 3).astype(np.float64)
-            final = simulate(
-                positions=pos,
-                steps=500,
-                k=10.0,
-                d0=1.0,
-                epsilon=1.0,
-                sigma=1.0,
-                gamma=1.0,
-                k_B=1.0,
-                T=1.0,
-                dt=0.01,
-                ideal_chain=True,
+    p = ax.scatter(
+        x,
+        y,
+        z,
+        c=np.arange(steps),
+        cmap="viridis",
+        s=5,
+    )
+
+    fig.colorbar(p, ax=ax, label="Time step")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_title("3D Diffusion Trajectory")
+    plt.savefig("img/diffusion_3D.png", dpi=300)
+    plt.close()
+
+    # this moves:
+    fig = go.Figure(
+        data=[
+            go.Scatter3d(
+                x=x,
+                y=y,
+                z=z,
+                mode="lines+markers",
+                marker=dict(size=2, color=np.arange(steps), colorscale="Viridis"),
+            )
+        ]
+    )
+    fig.update_layout(
+        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
+        title="3D Diffusion Trajectory",
+    )
+
+    fig.write_html("img/diffusion_plot.html")
+
+
+def plot_diffusion_XYZ(
+    dt: float,
+    x_coordinates: np.ndarray,
+    y_coordinates: np.ndarray,
+    z_coordinates: np.ndarray,
+):
+    reps = x_coordinates.shape[0]
+    n_intervals = x_coordinates.shape[1]
+    t = np.arange(n_intervals) * dt
+
+    labels = ["x", "y", "z"]
+    coordinates = [x_coordinates, y_coordinates, z_coordinates]
+
+    for i in range(3):
+        for r in range(reps):
+            plt.plot(
+                t,
+                coordinates[i][r, :],
+                alpha=0.7,
+                lw=0.5,
+            )
+        plt.xlabel("Time (t)")
+        plt.ylabel(f"{labels[i]} coordinate")
+        plt.tight_layout()
+        plt.grid(alpha=0.5)
+        plt.savefig(f"img/diff_spread_{labels[i]}.png", dpi=300)
+        plt.close()
+
+
+def diffusion_fit_plot(
+    MSD_all: np.ndarray,
+    N: int,
+    dt: float,
+    plot: bool = True,
+    gamma: float = 1,
+    k_B: float = 1,
+    T: float = 1,
+):
+    reps = MSD_all.shape[0]
+    n_intervals = MSD_all.shape[1]
+    t = np.arange(n_intervals) * dt
+
+    MSD_mean = MSD_all.mean(axis=0)
+    MSD_sem = MSD_all.std(axis=0, ddof=1) / np.sqrt(reps)
+    MSD_theory = 6 * (k_B * T) / (N * gamma) * t
+
+    # 95% confidence interval
+    t_crit = stats.t.ppf(0.975, reps - 1)
+    CI_low = MSD_mean - t_crit * MSD_sem
+    CI_high = MSD_mean + t_crit * MSD_sem
+
+    inside = np.logical_and(MSD_theory >= CI_low, MSD_theory <= CI_high)
+    inside_all = inside.all()
+    print(f"Is theoretical MSD within 95% CI at all times? {inside_all}")
+
+    if plot:
+        plt.plot(t, MSD_mean, label="simulated MSD", markersize=7)
+        plt.fill_between(
+            t, CI_low, CI_high, color="gray", alpha=0.3, label="95% Confidence Interval"
+        )
+        plt.plot(t, MSD_theory, label="theoretical MSD", ls="--")
+        plt.xlabel("Time (t)")
+        plt.ylabel("Mean Squared Displacement (MSD)")
+        plt.title("Center of Mass MSD over Time")
+        plt.tight_layout()
+
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/diff_validation.png", dpi=300)
+        plt.close()
+
+    slopes_sample = np.zeros(reps)
+    for r in range(reps):
+        slopes_sample[r], _, r_value, _, stderr = stats.linregress(t, MSD_all[r, :])
+    NOT_REJECT = two_sides_test(slopes_sample, 6 * k_B * T / (N * gamma))
+    print(f"not rejected: {NOT_REJECT}")
+
+
+def diffusion(
+    N: int,
+    steps: int,
+    reps: int,
+    fit: bool,
+    plot3D: bool,
+    plotXYZ: bool = False,
+    sigma: float = 1,
+    d0: float = 1,
+    gamma: float = 1,
+    k_B: float = 1,
+    epsilon: float = 1,
+    T: float = 1,
+    k: float = 30,
+    dt: float = 1e-3,
+):
+
+    # data collectors
+    MSD_collector = np.zeros((reps, steps - 1))
+    CMx_trace_collector = np.zeros((reps, steps))
+    CMy_trace_collector = np.zeros((reps, steps))
+    CMz_trace_collector = np.zeros((reps, steps))
+
+    for r in tqdm(range(reps)):
+
+        # Initialize chain:
+        positions = initial_positions(N, d0)
+        pos_start = positions.copy()
+
+        # evolve positions
+        for step in range(steps - 1):
+            positions = simulate(
+                positions=positions,
+                steps=1,
+                d0=d0,
+                k=k,
+                epsilon=epsilon,
+                sigma=sigma,
+                gamma=gamma,
+                k_B=k_B,
+                T=T,
+                dt=dt,
+                ideal_chain=False,
             )
 
-            r_ee2_collector[i] += end_to_end_radius2(final)
-            r_g2_collector[i] += gyration_radius2(final)
-    plot_polymer(position=final, save_path="img/polymer_plot")
+            CMx_trace_collector[r, step] = np.mean(positions, axis=0)[0]
+            CMy_trace_collector[r, step] = np.mean(positions, axis=0)[1]
+            CMz_trace_collector[r, step] = np.mean(positions, axis=0)[2]
+            MSD_collector[r, step] = MC_MSD(pos_start, positions)
 
-    plt.plot(N, r_ee2_collector / 40, label="end to end radius")
-    plt.plot(N, r_g2_collector / 40, label="gyration radius")
-    plt.plot(N, (N - 1) * (1 / 10 + 1), label="ideal end to end", ls="--")
-    plt.plot(N, (N * N - 1) * (1 / 10 + 1) / 6 / N, label="ideal gyration", ls="--")
+    if fit:
+        diffusion_fit_plot(MSD_collector, N, dt, steps)
 
-    plt.grid(alpha=0.5)
-    plt.legend()
-    plt.show()
+    if plot3D:
+        plot_diffusion_3D(
+            CMx_trace_collector[0],
+            CMy_trace_collector[0],
+            CMz_trace_collector[0],
+            steps,
+        )
+
+    if plotXYZ:
+        plot_diffusion_XYZ(
+            dt,
+            CMx_trace_collector,
+            CMy_trace_collector,
+            CMz_trace_collector,
+        )
 
 
-def mala_step(
-    positions: np.ndarray,
-    gamma: float,
-    k_b: float,
-    k: float,
-    T: float,
-    dt: float,
-    epsilon: float,
-    sigma: float,
-    d0: float,
-    skip_bonded: bool = True,
-    rng: np.random.Generator | None = None,
-) -> np.ndarray:
-    """
-    Performs one MALA step for the polymer chain
-    """
+def warm_up(
+    N: int,
+    steps: int,
+    reps: int,
+    plot: bool = True,
+    sigma: float = 1,
+    d0: float = 1,
+    gamma: float = 1,
+    k_B: float = 1,
+    epsilon: float = 1,
+    T: float = 1,
+    k: float = 30,
+    dt: float = 1e-3,
+):
 
-    # compute current forces and energy
-    f_h = np.zeros_like(positions, dtype=np.float64)
-    f_lj = np.zeros_like(positions, dtype=np.float64)
+    r_ee_collector = np.zeros((reps, steps))
+    for r in tqdm(range(reps)):
+        positions = initial_positions(N, d0)
 
-    _, e_h = compute_harmonic_forces(positions=positions, k=k, d0=d0, out=f_h)
-    _, e_lj = compute_lj_forces(
-        positions=positions,
-        epsilon=epsilon,
-        sigma=sigma,
-        skip_bonded=skip_bonded,
-        out=f_lj,
-    )
+        for s in range(steps):
+            positions = simulate(
+                positions,
+                steps=1,
+                d0=d0,
+                epsilon=epsilon,
+                sigma=sigma,
+                gamma=gamma,
+                k=k,
+                k_B=k_B,
+                T=T,
+                dt=dt,
+                ideal_chain=True,
+            )
+            r_ee_collector[r, s] = np.sqrt(end_to_end_radius2(positions))
 
-    u_current = e_h + e_lj
-    f_current = f_h + f_lj
+    t = np.linspace(dt, dt * steps, steps)
 
-    # save current state
-    pos_current = positions.copy()
+    if plot:
+        for i in range(20):
+            plt.plot(t, r_ee_collector[i, :], alpha=0.5, lw=0.5)
+        plt.plot(
+            t,
+            np.mean(r_ee_collector, axis=0),
+            label="average end to end radius",
+            color="black",
+        )
+        plt.xlabel("Time (t)")
+        plt.ylabel("End to end radius")
+        plt.title("End to End Radius over Time")
+        plt.plot(t, np.sqrt(N) * np.ones_like(t), ls="--", c="r")
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.savefig("img/end_to_end_over_time.png", dpi=300)
+        plt.close()
 
-    # generate proposal
-    langevin_step(positions, f_current, gamma, k_b, T, dt, rng=rng)
 
-    pos_proposal = positions
+def data_varying_N(
+    N_list: np.ndarray,
+    steps: int,
+    reps: int,
+    ideal_chain: bool,
+    plot_diff_N: bool = True,
+    plot_Ree_N: bool = True,
+    verbose: bool = False,
+    sigma: float = 1,
+    d0: float = 1,
+    gamma: float = 1,
+    k_B: float = 1,
+    epsilon: float = 1,
+    T: float = 1,
+    k: float = 30,
+    dt: float = 1e-3,
+):
+    # data collectors for slope
+    slopes_collector = np.zeros((len(N_list), reps))
+    slope_CI_low = np.zeros(len(N_list))
+    slope_CI_high = np.zeros(len(N_list))
+    slope_test_result = np.zeros(len(N_list), dtype=bool)
+    slope_mean = np.zeros(len(N_list))
 
-    # compute forces and energy at proposal
-    f_h_prop = np.zeros_like(pos_proposal, dtype=np.float64)
-    f_lj_prop = np.zeros_like(pos_proposal, dtype=np.float64)
-    _, e_h_prop = compute_harmonic_forces(
-        positions=pos_proposal, k=k_b, d0=d0, out=f_h_prop
-    )
-    _, e_lj_prop = compute_lj_forces(
-        positions=pos_proposal,
-        epsilon=epsilon,
-        sigma=sigma,
-        skip_bonded=skip_bonded,
-        out=f_lj_prop,
-    )
-    u_proposal = e_h_prop + e_lj_prop
-    f_proposal = f_h_prop + f_lj_prop
+    # data collector for end to end radius
+    r_ee2_collector = np.zeros((len(N_list), reps))
+    r_ee2_CI_low = np.zeros(len(N_list))
+    r_ee2_CI_high = np.zeros(len(N_list))
+    r_ee2_test_result = np.zeros(len(N_list), dtype=bool)
+    r_ee2_mean = np.zeros(len(N_list))
 
-    print(u_proposal, u_current)
-    # hastings correction
-    mu = dt / gamma
-    D = k_b * T * dt / gamma
+    # time
+    t = np.arange(1, steps) * dt
 
-    # forward prob q(x'|x)
-    diff_forward = pos_proposal - pos_current - mu * f_current
-    log_q_forward = -np.sum(diff_forward**2) / (4 * D)
+    for i in tqdm(range(len(N_list))):
+        n = N_list[i]
 
-    # backward prob q(x|x')
-    diff_backward = pos_current - pos_proposal - mu * f_proposal
-    log_q_backward = -np.sum(diff_backward**2) / (4 * D)
+        for r in tqdm(range(reps)):
+            positions = initial_positions(n, d0)
+            start_pos = positions.copy()
 
-    # acceptance probability
-    log_alpha = (u_current - u_proposal) / (k_b * T) + log_q_backward - log_q_forward
+            MSD_collector = np.zeros(steps - 1)
+            r_ee2 = np.zeros(steps - 1)
 
-    # accept or reject
-    if np.random.rand() < np.exp(log_alpha):
-        # accept
-        return pos_proposal, [e_h_prop, e_lj_prop]
-    else:
-        # reject
-        return pos_current, [e_h, e_lj]
+            for step in range(steps - 1):
+                positions = simulate(
+                    positions,
+                    steps=1,
+                    d0=d0,
+                    k=k,
+                    epsilon=epsilon,
+                    sigma=sigma,
+                    gamma=gamma,
+                    k_B=k_B,
+                    T=T,
+                    dt=dt,
+                    ideal_chain=ideal_chain,
+                )
+                MSD_collector[step] = MC_MSD(start_pos, positions)
+                r_ee2[step] = end_to_end_radius2(positions)
+
+            slopes_collector[i, r], _, r_value, _, stderr = stats.linregress(
+                t, MSD_collector
+            )
+            r_ee2_collector[i, r] = np.mean(r_ee2)
+
+        # compute statistics for this N
+        slope_mean[i] = slopes_collector[i, :].mean()
+        r_ee2_mean[i] = r_ee2_collector[i, :].mean()
+
+        # 95% CI for slopes
+        sem = slopes_collector[i, :].std(ddof=1) / np.sqrt(reps)
+        t_crit = stats.t.ppf(0.975, reps - 1)
+        slope_CI_low[i] = slope_mean[i] - t_crit * sem
+        slope_CI_high[i] = slope_mean[i] + t_crit * sem
+
+        # 95% CI for r_ee
+        sem = r_ee2_collector[i, :].std(ddof=1) / np.sqrt(reps)
+        t_crit = stats.t.ppf(0.975, reps - 1)
+        r_ee2_CI_low[i] = r_ee2_mean[i] - t_crit * sem
+        r_ee2_CI_high[i] = r_ee2_mean[i] + t_crit * sem
+
+        # test theoretical slope
+        slope_theory = 6 * k_B * T / (n * gamma)
+        slope_test_result[i] = two_sides_test(slopes_collector[i, :], slope_theory)
+
+        if verbose:
+            print(
+                f"N = {n:3d} | slope mean = {slope_mean[i]:.4f} | "
+                f"theory = {slope_theory:.4f} | test: {slope_test_result[i]}"
+            )
+
+        # test theoretical end to end radius
+        r_ee2_theory = n
+        r_ee2_test_result[i] = two_sides_test(r_ee2_collector[i, :], r_ee2_theory)
+
+        if verbose:
+            print(
+                f"N = {n:3d} | slope mean = {r_ee2_mean[i]:.4f} | "
+                f"theory = {r_ee2_theory:.4f} | test: {r_ee2_test_result[i]}"
+            )
+
+    tag = "_LJ"
+    if ideal_chain:
+        tag = "_ideal"
+
+    if plot_Ree_N:
+        plt.figure(figsize=(7, 5))
+
+        plt.plot(
+            N_list, r_ee2_mean, "o-", label="Mean simulated squared end to end radius"
+        )
+        plt.fill_between(
+            N_list, r_ee2_CI_low, r_ee2_CI_high, alpha=0.3, color="gray", label="95% CI"
+        )
+
+        plt.plot(N_list, N_list, "--", label="Theoretical end to end radius")
+
+        plt.xlabel("Polymer length N")
+        plt.ylabel(r"$R$")
+        plt.title("End to end radius vs N")
+        plt.grid(alpha=0.5)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"img/end_to_end_val{tag}.png", dpi=300)
+        plt.close()
+
+    if plot_diff_N:
+        plt.figure(figsize=(7, 5))
+
+        plt.plot(N_list, slope_mean, "o-", label="Mean simulated slope")
+        plt.fill_between(
+            N_list, slope_CI_low, slope_CI_high, alpha=0.3, color="gray", label="95% CI"
+        )
+
+        plt.plot(
+            N_list, 6 * k_B * T / (N_list * gamma), "--", label="Theoretical slope"
+        )
+
+        plt.xlabel("Polymer length N")
+        plt.ylabel("Slope of MSD(t)")
+        plt.title("Slope of MSD vs N")
+        plt.grid(True, alpha=0.4)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"img/slope_vs_N{tag}.png", dpi=300)
+        plt.close()
 
 
 # ================================================================
@@ -549,381 +879,30 @@ if __name__ == "__main__":
     set_log_output("sim.log")  # or None
 
     # ================================================================
-    # Validation - ideal chain
+    # Validation
     # ================================================================
 
-    DIFFUSION_VAL = False
-    WARM_UP = False
-    RADIUS_VAL = False
+    # to see if warm up is needed, end to end radius over time with N monomers
+    # it plots ee radius over time, with theroetical value
+
+    steps = 500
+    reps = 100
+    N = 50
+    # warm_up(N, steps, reps)
+
+    # for ideal chain: computes R_ee letting N vary, plus fit?
+    N_list = np.linspace(10, 210, 5, dtype=int)
+    # data_varying_N(N_list, steps, reps, ideal_chain=True)
+
+    # introducing LJ potential, see how diffusion constant changes with N plus fit
+    data_varying_N(N_list, steps, reps, ideal_chain=False)
+
+    N = 20
+    # diffusion(N, steps, reps, fit=True, plot3D=True, plotXYZ=True)
+
+    # from here it can be removed
     BOND_VAL = False
     BOND_VAR_VAL = False
-    FULL_SIM = True
-
-    # sigma = 10**-9
-    # d0 = 0.95  # boh
-    # m= 1.66*10**-25
-    # gamma = 0.75 #boh
-    # k_B = constants.Boltzmann
-    # epsilon = k_B * 300
-    # T = 300
-    # dt = 1e-3
-
-    sigma = 1
-    d0 = 1  #
-    gamma = 1  # boh
-    k_B = 1
-    epsilon = 1
-    T = 1
-    k = 30
-    dt = 1e-3
-
-    if FULL_SIM:
-        N = 5
-        pos = np.random.randn(N, 3).astype(np.float64)
-        pos = ensure_positions(pos)
-        start_pos = pos.copy()
-
-        es = []
-        for i in range(50):
-            pos, energy = mala_step(
-                pos,
-                gamma,
-                k_B,
-                k,
-                T,
-                dt,
-                epsilon,
-                sigma,
-                d0,
-                skip_bonded=True,
-                rng=None,
-            )
-            es.append(energy)
-
-        plt.plot(np.array(es)[:, 0], label="Harmonic Energy")
-        plt.plot(np.array(es)[:, 1], label="LJ Energy")
-        plt.legend()
-        plt.show()
-
-    if DIFFUSION_VAL:
-        steps = 10000
-        reps = 1000
-
-        N = 20
-        pos = np.random.randn(N, 3).astype(np.float64)
-
-        MSD_collector = np.zeros(steps - 1)
-        CMx_trace_collector = np.zeros((reps, steps))
-        CMy_trace_collector = np.zeros((reps, steps))
-        CMz_trace_collector = np.zeros((reps, steps))
-
-        for r in tqdm(range(reps)):
-            positions = np.zeros((N, 3))
-            for j in range(1, N):
-                displacement = np.random.randn(3)
-                positions[j] = positions[j - 1] + d0 * displacement / np.linalg.norm(
-                    displacement
-                )
-
-            positions -= positions.mean(axis=0)
-            pos_start = positions.copy()
-            for step in range(steps - 1):
-                positions = simulate(
-                    positions=positions,
-                    steps=1,
-                    d0=d0,
-                    k=k,
-                    epsilon=epsilon,
-                    sigma=sigma,
-                    gamma=gamma,
-                    k_B=k_B,
-                    T=T,
-                    dt=dt,
-                    ideal_chain=False,
-                )
-                CMx_trace_collector[r, step] = np.mean(positions, axis=0)[0]
-                CMy_trace_collector[r, step] = np.mean(positions, axis=0)[1]
-                CMz_trace_collector[r, step] = np.mean(positions, axis=0)[2]
-                MSD_collector[step] += MC_MSD(pos_start, positions)
-
-        t = np.cumsum(np.ones(steps - 1) * dt)
-
-        popt, pcov = curve_fit(linear_fit, t, MSD_collector / reps)
-        a_opt, b_opt = popt
-        print("optimized parameters: a = {a_opt}, b = {b_opt}")
-
-        plt.plot(t, MSD_collector / reps, label="MSD of center of mass", markersize=7)
-        plt.plot(t, 6 * t * k_B * T / (N * gamma), label="theoretical MSD", ls="--")
-        plt.plot(t, linear_fit(t, a_opt, b_opt), "r-", label="fitted curve")
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diff_validation.png", dpi=300)
-        plt.close()
-
-        for r in range(reps):
-            plt.plot(
-                t,
-                CMx_trace_collector[r, :],
-                label="trace of center of mass",
-                alpha=0.7,
-                lw=0.5,
-            )
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diff_spread_x.png", dpi=300)
-        plt.close()
-
-        for r in range(reps):
-            plt.plot(
-                t,
-                CMy_trace_collector[r, :],
-                label="trace of center of mass",
-                alpha=0.7,
-                lw=0.5,
-            )
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diff_spread_y.png", dpi=300)
-        plt.close()
-
-        for r in range(reps):
-            plt.plot(
-                t,
-                CMz_trace_collector[r, :],
-                label="trace of center of mass",
-                alpha=0.7,
-                lw=0.5,
-            )
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diff_spread_z.png", dpi=300)
-        plt.close()
-
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection="3d")
-
-        ax.plot(
-            CMx_trace_collector[0],
-            CMy_trace_collector[0],
-            CMz_trace_collector[0],
-            lw=1.0,
-            color="blue",
-        )
-
-        # color by time
-        p = ax.scatter(
-            CMx_trace_collector[0],
-            CMy_trace_collector[0],
-            CMz_trace_collector[0],
-            c=np.arange(steps),
-            cmap="viridis",
-            s=5,
-        )
-
-        fig.colorbar(p, ax=ax, label="Time step")
-
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        ax.set_title("3D Diffusion Trajectory")
-        plt.savefig("diffusion_3D.png", dpi=300)
-        plt.close()
-
-        fig = go.Figure(
-            data=[
-                go.Scatter3d(
-                    x=CMx_trace_collector[0],
-                    y=CMy_trace_collector[0],
-                    z=CMz_trace_collector[0],
-                    mode="lines+markers",
-                    marker=dict(size=2, color=np.arange(steps), colorscale="Viridis"),
-                    line=dict(color="blue"),
-                )
-            ]
-        )
-
-        fig.update_layout(
-            scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
-            title="3D Diffusion Trajectory",
-        )
-
-        fig.show()
-        fig.write_html("diffusion_plot.html")
-
-    if WARM_UP:
-        steps_sample = 5000
-        reps = 1000
-
-        r_ee_collector = np.zeros((reps, steps_sample))
-        # r_g_collector = np.zeros((reps, steps_sample))
-
-        N = 50
-        for r in tqdm(range(reps)):
-            positions = np.zeros((N, 3))
-            for j in range(1, N):
-                displacement = np.random.randn(3)
-                positions[j] = positions[j - 1] + d0 * displacement / np.linalg.norm(
-                    displacement
-                )
-            positions -= positions.mean(axis=0)
-
-            # b2 = end_to_end_radius2(positions) / N
-
-            # print("data collection")
-            for s in range(steps_sample):
-                positions = simulate(
-                    positions,
-                    steps=1,
-                    d0=d0,
-                    epsilon=epsilon,
-                    sigma=sigma,
-                    gamma=gamma,
-                    k=k,
-                    k_B=k_B,
-                    T=T,
-                    dt=dt,
-                    ideal_chain=True,
-                )
-                r_ee_collector[r, s] = np.sqrt(end_to_end_radius2(positions))
-                # r_g_collector[r, s] = np.sqrt(gyration_radius2(positions))
-
-        t = np.linspace(dt, dt * steps_sample, steps_sample)
-
-        for i in range(20):
-            plt.plot(t, r_ee_collector[i, :], alpha=0.5, lw=0.5)
-
-        plt.plot(
-            t,
-            np.mean(r_ee_collector, axis=0),
-            label="average end to end radius",
-            color="black",
-        )
-
-        plt.plot(t, np.sqrt(N) * np.ones_like(t), ls="--", c="r")
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/end_to_end_over_time.png", dpi=300)
-        plt.close()
-
-        # for i in range(20):
-        #    plt.plot(t, r_g_collector[i, :], alpha=0.5, lw=0.5)
-        #
-        # plt.plot(
-        #    t,
-        #    np.mean(r_g_collector, axis=0),
-        #    label="average gyration radius",
-        #    color="black",
-        # )
-        #
-        # plt.plot(t, np.sqrt(N * k_B * T / k / 6) * np.ones_like(t), ls="--", c="r")
-        #
-        # plt.grid(alpha=0.5)
-        # plt.legend()
-        # plt.savefig("img/gyration_over_time.png", dpi=300)
-        # plt.close()
-
-    if RADIUS_VAL:
-        N = np.linspace(10, 510, 50, dtype=int)
-        r_ee2_collector = np.zeros_like(N)
-        MSD_collector = np.zeros_like(N)
-        # r_g2_collector = np.zeros_like(N)
-
-        steps_equil = 0
-        steps_sample = 1000
-        reps = 200
-
-        for i in tqdm(range(len(N))):
-            n = N[i]
-            Ree2 = 0
-            # Rg2 = 0
-
-            for r in tqdm(range(reps)):
-                positions = np.zeros((n, 3))
-                MSD = 0.0
-
-                for j in range(1, n):
-                    displacement = np.random.randn(3)
-                    positions[j] = positions[
-                        j - 1
-                    ] + d0 * displacement / np.linalg.norm(displacement)
-
-                positions -= positions.mean(axis=0)
-                start_pos = positions.copy()
-
-                # b2 = end_to_end_radius2(positions) / n
-                # equilibrium
-                # positions = simulate(
-                #     positions=positions,
-                #     steps=steps_equil,
-                #     d0=d0,
-                #     k=k,
-                #     epsilon=epsilon,
-                #     sigma=sigma,
-                #     gamma=gamma,
-                #     k_B=k_B,
-                #     T=T,
-                #     dt=1e-3,
-                #     ideal_chain=True,
-                # )
-                # positions -= np.mean(positions, axis=0)
-
-                ree2_sum = 0.0
-                # rg2_sum = 0.0
-
-                # print("data collection")
-                for _ in range(steps_sample):
-                    positions = simulate(
-                        positions,
-                        steps=1,
-                        d0=d0,
-                        k=k,
-                        epsilon=epsilon,
-                        sigma=sigma,
-                        gamma=gamma,
-                        k_B=k_B,
-                        T=T,
-                        dt=dt,
-                        ideal_chain=True,
-                    )
-                    # positions -= positions.mean(axis=0)
-                    ree2_sum += end_to_end_radius2(positions)
-                    # rg2_sum += gyration_radius2(positions)
-
-                Ree2 += ree2_sum / steps_sample
-                MSD += np.mean(positions, axis=0)
-                # Rg2 += rg2_sum / steps_sample
-            r_ee2_collector[i] = Ree2 / reps
-            MSD_collector[i] = MSD / reps
-            # r_g2_collector[i] = Rg2 / reps
-
-        # plt.plot(N, np.sqrt(r_g2_collector), label="gyration radius")
-        # plt.plot(N, np.sqrt(N), label="ideal gyration", ls="--")
-        # plt.grid(alpha=0.5)
-        # plt.legend()
-        # plt.savefig("img/gyration_val.png", dpi=300)
-        # plt.close()
-
-        plt.plot(N, np.sqrt(r_ee2_collector), label="end to end radius")
-        plt.plot(N, np.sqrt(N), label="ideal end to end", ls="--")
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/end_to_end_val.png", dpi=300)
-        plt.close()
-
-        plt.plot(N, MSD_collector, label="MSD")
-        plt.plot(
-            N, k_B * T / gamma / N, label="theoretical diffusion constant", ls="--"
-        )
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diffusion_N.png", dpi=300)
-        plt.close()
 
     if BOND_VAL:  # james
         steps = 500
