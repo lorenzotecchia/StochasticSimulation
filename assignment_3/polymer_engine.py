@@ -112,7 +112,7 @@ def _harmonic_kernel(
     forces: np.ndarray,
     k: float,
     d0: float,
-    energy: float | None = None,
+    energy: np.ndarray,
 ):
     n = positions.shape[0]
     # Caller ensures forces is zeroed
@@ -146,16 +146,18 @@ def _lj_kernel(
     sigma: float,
     skip_bonded: int,
     cutoff: float,
-    energy: float | None = None,
+    energy: np.ndarray,
 ):
     n = positions.shape[0]
     sig6 = sigma**6
     sig12 = sig6 * sig6
     cutoff2 = cutoff * cutoff
-    start_offset = 3 if skip_bonded != 0 else 1  # start_offset used to avoid
+    # start_offset = 3 if skip_bonded != 0 else 1  # start_offset used to avoid
 
     for i in range(n):  # double counting
-        for j in range(i + start_offset, n):
+        for j in range(i + 1, n):
+            if skip_bonded != 0 and j == i + 1:
+                continue
             dx = positions[j, 0] - positions[i, 0]
             dy = positions[j, 1] - positions[i, 1]
             dz = positions[j, 2] - positions[i, 2]
@@ -218,12 +220,11 @@ def compute_harmonic_forces(
     out = ensure_forces_buffer_like(positions, out)
     out.fill(0.0)
     LOGGER.log("DEBUG", "Computing harmonic forces", tag="harmonic")
-    energy_arr = np.array([energy], dtype=np.float64)
-    _harmonic_kernel(positions, out, k, d0, energy=energy_arr)
-    energy = energy_arr[0]
+    energy_arr = np.zeros(1, dtype=np.float64)
+    _harmonic_kernel(positions, out, k, d0, energy_arr)
     LOGGER.log("DEBUG", f"Forces sample: {out[:3]}", tag="harmonic")
     LOGGER.log("DEBUG", f"Energy sample: {energy}", tag="harmonic")
-    return out, energy
+    return out, energy_arr[0]
 
 
 def compute_lj_forces(
@@ -246,7 +247,7 @@ def compute_lj_forces(
         f"Computing LJ forces (epsilon={epsilon}, sigma={sigma}, cutoff={cutoff:.3f}, skip_bonded={skip_bonded})",
         tag="lj",
     )
-    energy_arr = np.array([energy], dtype=np.float64)
+    energy_arr = np.zeros(1, dtype=np.float64)
     _lj_kernel(
         positions,
         out,
@@ -254,12 +255,11 @@ def compute_lj_forces(
         sigma,
         1 if skip_bonded else 0,
         cutoff,
-        energy=energy_arr,
+        energy_arr,
     )
-    energy = energy_arr[0]
     LOGGER.log("DEBUG", f"LJ sample: {out[:3]}", tag="lj")
     LOGGER.log("DEBUG", f"energy sample: {energy}", tag="lj")
-    return out, energy
+    return out, energy_arr[0]
 
 
 def langevin_step(
@@ -320,28 +320,27 @@ def simulate(
     f_h = np.zeros_like(positions, dtype=np.float64)
     f_lj = np.zeros_like(positions, dtype=np.float64)
     total_f = np.zeros_like(positions, dtype=np.float64)
+    energy = np.zeros((steps, 2))
 
     for step in range(steps):
-        energy = np.zeros(3, dtype=np.float64)
 
         if step % 100 == 0:
             LOGGER.log("INFO", f"[step {step}]", tag="sim")
 
         # Fill preallocated buffers
-        compute_harmonic_forces(positions, k, d0, out=f_h, energy=energy[1])
-
+        f_h, E_h = compute_harmonic_forces(positions, k, d0, out=f_h)
+        E_lj = 0
         if not ideal_chain:
-            compute_lj_forces(
+            f_lj, E_lj = compute_lj_forces(
                 positions,
                 epsilon,
                 sigma,
                 skip_bonded=skip_bonded,
                 cutoff_factor=cutoff_factor,
                 out=f_lj,
-                energy=energy[2],
             )
-        else:
-            f_lj.fill(0.0)
+        energy[step, 0] = E_h
+        energy[step, 1] = E_lj
 
         # Sum forces
         total_f[:] = f_h + f_lj
@@ -349,9 +348,9 @@ def simulate(
         # print(f"Harmonic Energy: {energy[1]}, LJ Energy: {energy[2]}")
         # Integrate
         langevin_step(positions, total_f, gamma, k_B, T, dt, rng=rng)
-        print(energy)
+        # print(energy)
     LOGGER.log("INFO", "Simulation finished", tag="sim")
-    return positions
+    return positions, energy
 
 
 def mala_step(
@@ -436,7 +435,7 @@ def mala_step(
         return pos_current, [e_h, e_lj]
 
 
-def initial_positions(N: int, d0: float):
+def initial_positions2(N: int, d0: float):
     positions = np.zeros((N, 3))
     for j in range(1, N):
         displacement = np.random.randn(3)
@@ -445,6 +444,43 @@ def initial_positions(N: int, d0: float):
         )
     positions -= positions.mean(axis=0)
     return positions
+
+
+def initial_positions(N: int, d0: float):
+    positions = np.zeros((N, 3))
+    positions[:, 0] = np.arange(N) * d0
+    positions -= positions.mean(axis=0)
+    return positions
+
+
+def initial_positions3(N: int, d0: float, noise=0.1):
+    positions = np.zeros((N, 3))
+    positions[:, 0] = np.arange(N) * d0
+
+    positions += noise * np.random.randn(N, 3)
+    positions -= positions.mean(axis=0)
+
+    return positions
+
+
+def initial_positions4(N, d0, sigma, tries=1000):
+    pos = np.zeros((N, 3))
+
+    for i in range(1, N):
+        for attempt in range(tries):
+            disp = np.random.randn(3)
+            disp *= d0 / np.linalg.norm(disp)
+            trial = pos[i - 1] + disp
+
+            # check all previous beads aren't overlapping (LJ core)
+            if np.all(np.linalg.norm(pos[:i] - trial, axis=1) > 0.9 * sigma):
+                pos[i] = trial
+                break
+        # else:
+        #    raise RuntimeError("Failed to generate non-overlapping chain")
+
+    pos -= pos.mean(axis=0)
+    return pos
 
 
 def gyration_radius2(positions: np.ndarray) -> float:
@@ -527,44 +563,78 @@ def diffusion_fit_plot(
     k_B: float = 1,
     T: float = 1,
 ):
+    print("right")
     reps = MSD_all.shape[0]
     n_intervals = MSD_all.shape[1]
     t = np.arange(n_intervals) * dt
 
-    MSD_mean = MSD_all.mean(axis=0)
-    MSD_sem = MSD_all.std(axis=0, ddof=1) / np.sqrt(reps)
-    MSD_theory = 6 * (k_B * T) / (N * gamma) * t
+    slopes = np.zeros(reps)
 
-    # 95% confidence interval
+    for i in range(reps):
+        result = stats.linregress(t, MSD_all[i])
+        slopes[i] = result.slope
+
+    # --- Mean and SEM of slopes ---
+    slope_mean = np.mean(slopes)
+    slope_sem = np.std(slopes, ddof=1) / np.sqrt(reps)
+
+    # --- Theoretical slope ---
+    slope_theory = 6 * (k_B * T) / (N * gamma)
+
+    # --- 95% CI for slope mean ---
     t_crit = stats.t.ppf(0.975, reps - 1)
-    CI_low = MSD_mean - t_crit * MSD_sem
-    CI_high = MSD_mean + t_crit * MSD_sem
+    CI_low = slope_mean - t_crit * slope_sem
+    CI_high = slope_mean + t_crit * slope_sem
 
-    inside = np.logical_and(MSD_theory >= CI_low, MSD_theory <= CI_high)
-    inside_all = inside.all()
-    print(f"Is theoretical MSD within 95% CI at all times? {inside_all}")
+    # --- Check if theoretical slope is inside CI ---
+    inside = CI_low <= slope_theory <= CI_high
+
+    print("Mean slope:", slope_mean)
+    print("Theoretical slope:", slope_theory)
+    print("95% CI:", CI_low, CI_high)
+    print("Is theoretical slope inside CI?", inside)
+
+    df = pd.DataFrame(
+        {
+            "slope_mean": [slope_mean],
+            "MSD_theory": [slope_theory],
+            "CI_low": [CI_low],
+            "CI_high": [CI_high],
+        }
+    )
+
+    df.to_csv("msd_results.csv", index=False)
 
     if plot:
-        plt.plot(t, MSD_mean, label="simulated MSD", markersize=7)
-        plt.fill_between(
-            t, CI_low, CI_high, color="gray", alpha=0.3, label="95% Confidence Interval"
+        MSD_mean = MSD_all.mean(axis=0)
+
+        plt.figure(figsize=(8, 6))
+
+        # --- Plot all replications (light lines) ---
+        for i in range(reps):
+            plt.plot(t, MSD_all[i], color="gray", alpha=0.3)
+
+        # --- Plot mean MSD ---
+        plt.plot(t, MSD_mean, label="Mean MSD", color="blue", linewidth=2)
+
+        # --- Theoretical MSD ---
+        MSD_theory = 6 * (k_B * T) / (N * gamma) * t
+        plt.plot(
+            t,
+            MSD_theory,
+            label="Theoretical MSD",
+            color="red",
+            linestyle="--",
+            linewidth=2,
         )
-        plt.plot(t, MSD_theory, label="theoretical MSD", ls="--")
-        plt.xlabel("Time (t)")
-        plt.ylabel("Mean Squared Displacement (MSD)")
-        plt.title("Center of Mass MSD over Time")
-        plt.tight_layout()
 
-        plt.grid(alpha=0.5)
+        plt.xlabel("Time")
+        plt.ylabel("MSD")
         plt.legend()
-        plt.savefig("img/diff_validation.png", dpi=300)
+        plt.title("MSD mean and theoretical")
+        plt.grid(True, alpha=0.4)
+        plt.savefig("img/MSD_diffusion.png", dpi=300)
         plt.close()
-
-    slopes_sample = np.zeros(reps)
-    for r in range(reps):
-        slopes_sample[r], _, r_value, _, stderr = stats.linregress(t, MSD_all[r, :])
-    NOT_REJECT = two_sides_test(slopes_sample, 6 * k_B * T / (N * gamma))
-    print(f"not rejected: {NOT_REJECT}")
 
 
 def plot_diffusion_3D(x: np.ndarray, y: np.ndarray, z: np.ndarray, steps: int):
@@ -637,55 +707,6 @@ def plot_diffusion_XYZ(
         plt.close()
 
 
-def diffusion_fit_plot(
-    MSD_all: np.ndarray,
-    N: int,
-    dt: float,
-    plot: bool = True,
-    gamma: float = 1,
-    k_B: float = 1,
-    T: float = 1,
-):
-    reps = MSD_all.shape[0]
-    n_intervals = MSD_all.shape[1]
-    t = np.arange(n_intervals) * dt
-
-    MSD_mean = MSD_all.mean(axis=0)
-    MSD_sem = MSD_all.std(axis=0, ddof=1) / np.sqrt(reps)
-    MSD_theory = 6 * (k_B * T) / (N * gamma) * t
-
-    # 95% confidence interval
-    t_crit = stats.t.ppf(0.975, reps - 1)
-    CI_low = MSD_mean - t_crit * MSD_sem
-    CI_high = MSD_mean + t_crit * MSD_sem
-
-    inside = np.logical_and(MSD_theory >= CI_low, MSD_theory <= CI_high)
-    inside_all = inside.all()
-    print(f"Is theoretical MSD within 95% CI at all times? {inside_all}")
-
-    if plot:
-        plt.plot(t, MSD_mean, label="simulated MSD", markersize=7)
-        plt.fill_between(
-            t, CI_low, CI_high, color="gray", alpha=0.3, label="95% Confidence Interval"
-        )
-        plt.plot(t, MSD_theory, label="theoretical MSD", ls="--")
-        plt.xlabel("Time (t)")
-        plt.ylabel("Mean Squared Displacement (MSD)")
-        plt.title("Center of Mass MSD over Time")
-        plt.tight_layout()
-
-        plt.grid(alpha=0.5)
-        plt.legend()
-        plt.savefig("img/diff_validation.png", dpi=300)
-        plt.close()
-
-    slopes_sample = np.zeros(reps)
-    for r in range(reps):
-        slopes_sample[r], _, r_value, _, stderr = stats.linregress(t, MSD_all[r, :])
-    NOT_REJECT = two_sides_test(slopes_sample, 6 * k_B * T / (N * gamma))
-    print(f"not rejected: {NOT_REJECT}")
-
-
 def diffusion(
     N: int,
     steps: int,
@@ -717,7 +738,7 @@ def diffusion(
 
         # evolve positions
         for step in range(steps - 1):
-            positions = simulate(
+            positions, _ = simulate(
                 positions=positions,
                 steps=1,
                 d0=d0,
@@ -737,6 +758,7 @@ def diffusion(
             MSD_collector[r, step] = MC_MSD(pos_start, positions)
 
     if fit:
+        print("fitting")
         diffusion_fit_plot(MSD_collector, N, dt, steps)
 
     if plot3D:
@@ -776,7 +798,7 @@ def warm_up(
         positions = initial_positions(N, d0)
 
         for s in range(steps):
-            positions = simulate(
+            positions, _ = simulate(
                 positions,
                 steps=1,
                 d0=d0,
@@ -857,7 +879,7 @@ def data_varying_N(
             r_ee2 = np.zeros(steps - 1)
 
             for step in range(steps - 1):
-                positions = simulate(
+                positions, _ = simulate(
                     positions,
                     steps=1,
                     d0=d0,
@@ -918,6 +940,30 @@ def data_varying_N(
     if ideal_chain:
         tag = "_ideal"
 
+    df = pd.DataFrame(
+        {
+            "slope_mean": slope_mean,
+            "slope_theory": 6 * k_B * T / (N * gamma),
+            "CI_low": slope_CI_low,
+            "CI_high": slope_CI_high,
+            "test_result": slope_test_result,
+        }
+    )
+
+    df.to_csv(f"slopes_results{tag}.csv", index=False)
+
+    df = pd.DataFrame(
+        {
+            "ree2_mean": r_ee2_mean,
+            "ree2_theory": N,
+            "ree2_low": r_ee2_CI_low,
+            "ree2_high": r_ee2_CI_high,
+            "test_result": r_ee2_test_result,
+        }
+    )
+
+    df.to_csv(f"ree2_results{tag}.csv", index=False)
+
     if plot_Ree_N:
         plt.figure(figsize=(7, 5))
 
@@ -961,6 +1007,57 @@ def data_varying_N(
         plt.close()
 
 
+def energy_langevin_plot(
+    N: int,
+    steps: int,
+    reps: int,
+    ideal_chain: bool = False,
+    sigma: float = 1,
+    d0: float = 1,
+    gamma: float = 1,
+    k_B: float = 1,
+    epsilon: float = 1,
+    T: float = 1,
+    k: float = 30,
+    dt: float = 1e-3,
+):
+    # average_energy = np.zeros((steps, 2))
+    positions = initial_positions(N, d0)
+    _, energy = simulate(
+        positions,
+        steps=steps,
+        d0=d0,
+        epsilon=epsilon,
+        sigma=sigma,
+        gamma=gamma,
+        k=k,
+        k_B=k_B,
+        T=T,
+        dt=dt,
+        ideal_chain=ideal_chain,
+    )
+    # average_energy[:, 0] += energy[:, 0]
+    # average_energy[:, 1] += energy[:, 1]
+
+    t = np.linspace(dt, dt * steps, steps)
+
+    plt.plot(t, energy[:, 0], label="Harmonic Energy")
+    plt.plot(t, energy[:, 1], label="LJ Energy")
+    plt.grid(alpha=0.4)
+    plt.plot(
+        t,
+        (energy[:, 0] + energy[:, 1]),
+        color="red",
+        ls="--",
+        label="Total Energy",
+    )
+    plt.legend()
+    plt.savefig("img/energy_langevin.png", dpi=300)
+    plt.close()
+    print(energy[:, 0][:10])
+    print(energy[:, 1][:10])
+
+
 # ================================================================
 # Example run
 # ================================================================
@@ -976,25 +1073,26 @@ if __name__ == "__main__":
     # to see if warm up is needed, end to end radius over time with N monomers
     # it plots ee radius over time, with theroetical value
 
-    steps = 500
-    reps = 100
+    steps = 1000
+    reps = 200
     N = 50
     # warm_up(N, steps, reps)
 
-    # for ideal chain: computes R_ee letting N vary, plus fit?
-    N_list = np.linspace(10, 210, 5, dtype=int)
+    # for ideal chain: computes R_ee letting N vary, plus fit
+    N_list = np.linspace(10, 210, 50, dtype=int)
     # data_varying_N(N_list, steps, reps, ideal_chain=True)
 
     # introducing LJ potential, see how diffusion constant changes with N plus fit
-    data_varying_N(N_list, steps, reps, ideal_chain=False)
+    # data_varying_N(N_list, steps, reps, ideal_chain=False)
 
-    N = 20
+    N, steps, reps = 20, 10000, 200
     # diffusion(N, steps, reps, fit=True, plot3D=True, plotXYZ=True)
 
-    # from here it can be removed
-    BOND_VAL = False
-    BOND_VAR_VAL = False
-    FULL_SIM = True
+    # plot energy Langevin
+    N, steps, reps = 20, 10000, 1
+    energy_langevin_plot(N, steps, reps)
+
+    FULL_SIM = False
 
     if FULL_SIM:
         sigma = 1
@@ -1032,6 +1130,9 @@ if __name__ == "__main__":
         plt.legend()
         plt.show()
 
+    # from here it can be removed:
+    BOND_VAL = False
+    BOND_VAR_VAL = False
     if BOND_VAL:  # james
         steps = 500
         reps = 40
@@ -1043,7 +1144,7 @@ if __name__ == "__main__":
             for j in range(reps):
                 n = N[i]
                 pos = np.random.randn(n, 3).astype(np.float64)
-                final = simulate(
+                final, _ = simulate(
                     positions=pos,
                     steps=steps,
                     d0=d0,
@@ -1079,7 +1180,7 @@ if __name__ == "__main__":
             for j in range(reps):
                 n = N[i]
                 pos = np.random.randn(n, 3).astype(np.float64)
-                final = simulate(
+                final, _ = simulate(
                     positions=pos,
                     steps=steps,
                     d0=d0,
