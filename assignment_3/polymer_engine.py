@@ -9,6 +9,8 @@ from numba import njit
 from tqdm import tqdm
 from scipy import constants
 import csv
+from matplotlib.colors import Normalize
+from matplotlib import cm
 
 # TODO: Implement simulated annealing and MCMC techinques
 
@@ -224,6 +226,7 @@ def compute_harmonic_forces(
     _harmonic_kernel(positions, out, k, d0, energy_arr)
     LOGGER.log("DEBUG", f"Forces sample: {out[:3]}", tag="harmonic")
     LOGGER.log("DEBUG", f"Energy sample: {energy}", tag="harmonic")
+    energy = energy_arr[0]
     return out, energy_arr[0]
 
 
@@ -259,6 +262,7 @@ def compute_lj_forces(
     )
     LOGGER.log("DEBUG", f"LJ sample: {out[:3]}", tag="lj")
     LOGGER.log("DEBUG", f"energy sample: {energy}", tag="lj")
+    energy = energy_arr[0]
     return out, energy_arr[0]
 
 
@@ -353,6 +357,41 @@ def simulate(
     return positions, energy
 
 
+def _get_mala_proposal(
+    positions: np.ndarray,
+    f_current: np.ndarray,
+    k_b: float,
+    epsilon: float,
+    sigma: float,
+    gamma: float,
+    T: float,
+    dt: float,
+    d0: float,
+    skip_bonded: bool,
+    rng: np.random.Generator | None = None,
+) -> tuple:
+    # generate proposal
+    langevin_step(positions, f_current, gamma, k_b, T, dt, rng=rng)
+
+    pos_proposal = positions
+
+    # compute forces and energy at proposal
+    f_h_prop = np.zeros_like(pos_proposal, dtype=np.float64)
+    f_lj_prop = np.zeros_like(pos_proposal, dtype=np.float64)
+    _, e_h_prop = compute_harmonic_forces(
+        positions=pos_proposal, k=k, d0=d0, out=f_h_prop
+    )
+    _, e_lj_prop = compute_lj_forces(
+        positions=pos_proposal,
+        epsilon=epsilon,
+        sigma=sigma,
+        skip_bonded=skip_bonded,
+        out=f_lj_prop,
+    )
+
+    return (pos_proposal, [e_h_prop, e_lj_prop], [f_h_prop, f_lj_prop])
+
+
 def mala_step(
     positions: np.ndarray,
     gamma: float,
@@ -363,6 +402,8 @@ def mala_step(
     epsilon: float,
     sigma: float,
     d0: float,
+    T_SA: float = 1.0,
+    h_SA: float = 1.0,
     skip_bonded: bool = True,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
@@ -389,28 +430,23 @@ def mala_step(
     # save current state
     pos_current = positions.copy()
 
-    # generate proposal
-    langevin_step(positions, f_current, gamma, k_b, T, dt, rng=rng)
-
-    pos_proposal = positions
-
-    # compute forces and energy at proposal
-    f_h_prop = np.zeros_like(pos_proposal, dtype=np.float64)
-    f_lj_prop = np.zeros_like(pos_proposal, dtype=np.float64)
-    _, e_h_prop = compute_harmonic_forces(
-        positions=pos_proposal, k=k_b, d0=d0, out=f_h_prop
-    )
-    _, e_lj_prop = compute_lj_forces(
-        positions=pos_proposal,
+    pos_proposal, (e_h_prop, e_lj_prop), (f_h_prop, f_lj_prop) = _get_mala_proposal(
+        positions=positions.copy(),
+        f_current=f_current,
+        k_b=k_b,
         epsilon=epsilon,
         sigma=sigma,
+        gamma=gamma,
+        T=T,
+        dt=dt,
+        d0=d0,
         skip_bonded=skip_bonded,
-        out=f_lj_prop,
+        rng=rng,
     )
+
     u_proposal = e_h_prop + e_lj_prop
     f_proposal = f_h_prop + f_lj_prop
 
-    print(u_proposal, u_current)
     # hastings correction
     mu = dt / gamma
     D = k_b * T * dt / gamma
@@ -424,7 +460,11 @@ def mala_step(
     log_q_backward = -np.sum(diff_backward**2) / (4 * D)
 
     # acceptance probability
-    log_alpha = (u_current - u_proposal) / (k_b * T) + log_q_backward - log_q_forward
+    log_alpha = (
+        h_SA / T_SA * (u_current - u_proposal) / (k_b * T)
+        + log_q_backward
+        - log_q_forward
+    )
 
     # accept or reject
     if np.random.rand() < np.exp(log_alpha):
@@ -1064,6 +1104,115 @@ def energy_langevin_plot(
     print(energy[:, 1][:10])
 
 
+def plot_energy_with_bands(x, y, label, color, window=500, ax=None):
+    """
+    x:     iteration indices
+    y:     raw energy curve
+    label: name for legend
+    color: base color (e.g. 'blue')
+    window: smoothing window size
+    ax:    optional matplotlib axes
+    """
+
+    if ax is None:
+        ax = plt.gca()
+
+    # Convert to pandas series for rolling std
+    s = pd.Series(y)
+
+    # Rolling mean and std
+    mean = s.rolling(window, center=True).mean()
+    std = s.rolling(window, center=True).std()
+
+    # Plot raw data (faint)
+    ax.plot(x, y, color=color, alpha=0.15)
+
+    # Plot smoothed mean
+    ax.plot(x, mean, color=color, lw=2, label=label)
+
+    # Shaded standard deviation band
+    ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.25)
+
+    return ax
+
+
+def plot_polymer_3d_old(ax, pos, title):
+    ax.plot(pos[:, 0], pos[:, 1], pos[:, 2], "-o", markersize=3)
+    ax.set_title(title)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+
+    cmap = cm.get_cmap("viridis")
+    norm = Normalize(vmin=0, vmax=pos.shape[0] - 1)
+
+    # equal aspect ratio for nicer geometry
+    max_range = (
+        np.array(
+            [
+                pos[:, 0].max() - pos[:, 0].min(),
+                pos[:, 1].max() - pos[:, 1].min(),
+                pos[:, 2].max() - pos[:, 2].min(),
+            ]
+        ).max()
+        / 2.0
+    )
+
+    mid_x = (pos[:, 0].max() + pos[:, 0].min()) * 0.5
+    mid_y = (pos[:, 1].max() + pos[:, 1].min()) * 0.5
+    mid_z = (pos[:, 2].max() + pos[:, 2].min()) * 0.5
+
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+
+def plot_polymer_3d(ax, pos, title):
+    N = len(pos)
+
+    # colormap for N beads
+    cmap = cm.get_cmap("viridis")
+    norm = Normalize(vmin=0, vmax=N - 1)
+
+    # plot beads individually
+    for i in range(N):
+        ax.scatter(pos[i, 0], pos[i, 1], pos[i, 2], color=cmap(norm(i)), s=30)
+        if i > 0:
+            # draw bond with same color as bead i
+            ax.plot(
+                pos[i - 1 : i + 1, 0],
+                pos[i - 1 : i + 1, 1],
+                pos[i - 1 : i + 1, 2],
+                color=cmap(norm(i)),
+                lw=2,
+            )
+
+    ax.set_title(title)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+
+    # Equal aspect ratio code (unchanged)
+    max_range = (
+        np.array(
+            [
+                pos[:, 0].max() - pos[:, 0].min(),
+                pos[:, 1].max() - pos[:, 1].min(),
+                pos[:, 2].max() - pos[:, 2].min(),
+            ]
+        ).max()
+        / 2.0
+    )
+
+    mid_x = (pos[:, 0].max() + pos[:, 0].min()) * 0.5
+    mid_y = (pos[:, 1].max() + pos[:, 1].min()) * 0.5
+    mid_z = (pos[:, 2].max() + pos[:, 2].min()) * 0.5
+
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+
 # ================================================================
 # Example run
 # ================================================================
@@ -1090,20 +1239,20 @@ if __name__ == "__main__":
     # warm_up(N, steps, reps)
 
     # for ideal chain: computes R_ee letting N vary, plus fit
-    N_list = np.linspace(10, 210, 50, dtype=int)
-    data_varying_N(N_list, steps, reps, ideal_chain=True)
+    # N_list = np.linspace(10, 210, 50, dtype=int)
+    # data_varying_N(N_list, steps, reps, ideal_chain=True)
 
     # introducing LJ potential, see how diffusion constant changes with N plus fit
-    data_varying_N(N_list, steps, reps, ideal_chain=False)
+    # data_varying_N(N_list, steps, reps, ideal_chain=False)
 
-    N, steps, reps = 20, 10000, 200
+    # N, steps, reps = 20, 10000, 200
     # diffusion(N, steps, reps, fit=True, plot3D=True, plotXYZ=True)
 
     # plot energy Langevin
-    N, steps, reps = 20, 10000, 1
+    # N, steps, reps = 20, 10000, 1
     # energy_langevin_plot(N, steps, reps)
 
-    FULL_SIM = False
+    FULL_SIM = True
 
     if FULL_SIM:
         sigma = 1
@@ -1114,32 +1263,102 @@ if __name__ == "__main__":
         T = 1
         k = 30
         dt = 1e-3
-        N = 5
-        pos = np.random.randn(N, 3).astype(np.float64)
-        pos = ensure_positions(pos)
+
+        # generate inital position
+        N = 15
+        pos = initial_positions4(N, d0, sigma)
         start_pos = pos.copy()
+        mala_steps = 300
+
+        # setup simulated annealing
+        T_anneal = 1.0
+        sa_steps = 500
+        alpha = 0.997
 
         es = []
-        for i in range(50):
-            pos, energy = mala_step(
-                pos,
-                gamma,
-                k_B,
-                k,
-                T,
-                dt,
-                epsilon,
-                sigma,
-                d0,
-                skip_bonded=True,
-                rng=None,
-            )
-            es.append(energy)
+        T_anneals = []
+        for i in tqdm(range(sa_steps), "SA Steps"):
+            for j in range(mala_steps):
+                pos, energy = mala_step(
+                    pos,
+                    gamma,
+                    k_B,
+                    k,
+                    T,
+                    dt,
+                    epsilon,
+                    sigma,
+                    d0,
+                    T_SA=T_anneal,
+                    h_SA=1.0,
+                    skip_bonded=True,
+                    rng=None,
+                )
+                es.append(energy)
+                T_anneals.append(T_anneal)
+            T_anneal *= alpha
 
-        plt.plot(np.array(es)[:, 0], label="Harmonic Energy")
-        plt.plot(np.array(es)[:, 1], label="LJ Energy")
-        plt.legend()
+        # Smooth curves
+        H = np.array(es)[:, 0]
+        LJ = np.array(es)[:, 1]
+        Tot = H + LJ
+        T_schedule = np.array(T_anneals)
+
+        fig = plt.figure(figsize=(16, 8))
+
+        ax1 = fig.add_subplot(1, 1, 1)
+
+        x = np.arange(len(H))
+
+        # energies
+        plot_energy_with_bands(x, H, "Harmonic Energy", "#4C72B0", window=500, ax=ax1)
+        plot_energy_with_bands(x, LJ, "LJ Energy", "#DD8452", window=500, ax=ax1)
+        plot_energy_with_bands(x, Tot, "Total Energy", "black", window=500, ax=ax1)
+        ax1.set_xlabel("MALA iterations")
+        ax1.set_ylabel("Energy")
+        ax1.legend()
+        ax1.set_title("Energy Components during MALA with Simulated Annealing")
+        ax1.grid(alpha=0.4)
+
+        # Temperature schedule
+        ax2 = ax1.twinx()
+        ax2.plot(
+            x, T_schedule, color="#55A868", ls="--", lw=2, label="$T_{SA}$", zorder=0
+        )
+        ax2.set_ylabel("Simulated Annealing Temperature", color="#55A868")
+
+        plt.tight_layout()
+        plt.savefig("assignment_3/img/energy_mala_sa.png", dpi=300)
+
+        # 3d plots
+
+        fig = plt.figure(figsize=(16, 9))
+        ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+        plot_polymer_3d(ax1, start_pos, "Initial Conformation")
+        ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+        plot_polymer_3d(ax2, pos, "Final Conformation")
+
+        plt.tight_layout()
+        plt.savefig("assignment_3/img/conformations_mala_sa.png", dpi=300)
         plt.show()
+
+        """ 
+        
+
+        fig, axs = plt.subplots(1, 1, figsize=(8, 5))
+        axs.plot(np.array(es)[:, 0], label="Harmonic Energy")
+        axs.plot(np.array(es)[:, 1], label="LJ Energy")
+        axs.plot(
+            np.array(es)[:, 0] + np.array(es)[:, 1],
+            label="Total Energy",
+            ls="--",
+            color="black",
+        )
+        # second y axis
+        ax2 = axs.twinx()
+        ax2.plot(T_anneals, label="Temperature Annealing", ls="--", color="darkgreen")
+        axs.legend()
+        plt.show() """
 
     # from here it can be removed:
     BOND_VAL = False
