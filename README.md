@@ -41,8 +41,6 @@ python assignment_3/polymer_engine.py                        # polymer runs → 
 
 ### Interactive plots
 
-GitHub doesn't render HTML inline, so these open through [htmlpreview](https://htmlpreview.github.io) (~5 MB each, give them a moment):
-
 <p align="center">
   <a href="https://htmlpreview.github.io/?https://github.com/lorenzotecchia/StochasticSimulation/blob/main/assignment_3/diffusion_animation.html">
     <img src="assignment_3/animation.gif" width="60%" alt="3D diffusion trajectory animation">
