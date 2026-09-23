@@ -39,6 +39,19 @@ python assignment_3/polymer_engine.py                        # polymer runs → 
   <img src="assignment_3/img/slope_vs_N_LJ.png" width="45%">
 </p>
 
+### Interactive plots
+
+GitHub doesn't render HTML inline, so these open through [htmlpreview](https://htmlpreview.github.io) (~5 MB each, give them a moment):
+
+<p align="center">
+  <a href="https://htmlpreview.github.io/?https://github.com/lorenzotecchia/StochasticSimulation/blob/main/assignment_3/diffusion_animation.html">
+    <img src="assignment_3/animation.gif" width="60%" alt="3D diffusion trajectory animation">
+  </a>
+</p>
+
+- [3D diffusion trajectory — animated](https://htmlpreview.github.io/?https://github.com/lorenzotecchia/StochasticSimulation/blob/main/assignment_3/diffusion_animation.html)
+- [3D diffusion trajectory — static](https://htmlpreview.github.io/?https://github.com/lorenzotecchia/StochasticSimulation/blob/main/assignment_3/img/diffusion_plot.html)
+
 ## Layout
 
 ```
